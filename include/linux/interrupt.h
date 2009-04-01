@@ -117,6 +117,15 @@ extern void disable_irq_nosync(unsigned int irq);
 extern void disable_irq(unsigned int irq);
 extern void enable_irq(unsigned int irq);
 
+/* The following three functions are for the core kernel use only. */
+extern void suspend_device_irqs(void);
+extern void resume_device_irqs(void);
+#ifdef CONFIG_PM_SLEEP
+extern int check_wakeup_irqs(void);
+#else
+static inline int check_wakeup_irqs(void) { return 0; }
+#endif
+
 #if defined(CONFIG_SMP) && defined(CONFIG_GENERIC_HARDIRQS)
 
 extern cpumask_var_t irq_default_affinity;
@@ -484,6 +493,7 @@ int show_interrupts(struct seq_file *p, void *v);
 struct irq_desc;
 
 extern int early_irq_init(void);
+extern int arch_probe_nr_irqs(void);
 extern int arch_early_irq_init(void);
 extern int arch_init_chip_data(struct irq_desc *desc, int cpu);
 
