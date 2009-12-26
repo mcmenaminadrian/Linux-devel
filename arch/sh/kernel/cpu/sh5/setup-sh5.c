@@ -16,22 +16,18 @@
 #include <linux/sh_timer.h>
 #include <asm/addrspace.h>
 
-static struct plat_sci_port sci_platform_data[] = {
-	{
-		.mapbase	= PHYS_PERIPHERAL_BLOCK + 0x01030000,
-		.flags		= UPF_BOOT_AUTOCONF | UPF_IOREMAP,
-		.type		= PORT_SCIF,
-		.irqs		= { 39, 40, 42, 0 },
-	}, {
-		.flags = 0,
-	}
+static struct plat_sci_port scif0_platform_data = {
+	.mapbase	= PHYS_PERIPHERAL_BLOCK + 0x01030000,
+	.flags		= UPF_BOOT_AUTOCONF | UPF_IOREMAP,
+	.type		= PORT_SCIF,
+	.irqs		= { 39, 40, 42, 0 },
 };
 
-static struct platform_device sci_device = {
+static struct platform_device scif0_device = {
 	.name		= "sh-sci",
-	.id		= -1,
+	.id		= 0,
 	.dev		= {
-		.platform_data	= sci_platform_data,
+		.platform_data	= &scif0_platform_data,
 	},
 };
 
@@ -164,13 +160,13 @@ static struct platform_device tmu2_device = {
 };
 
 static struct platform_device *sh5_early_devices[] __initdata = {
+	&scif0_device,
 	&tmu0_device,
 	&tmu1_device,
 	&tmu2_device,
 };
 
 static struct platform_device *sh5_devices[] __initdata = {
-	&sci_device,
 	&rtc_device,
 };
 
@@ -186,7 +182,7 @@ static int __init sh5_devices_setup(void)
 	return platform_add_devices(sh5_devices,
 				    ARRAY_SIZE(sh5_devices));
 }
-__initcall(sh5_devices_setup);
+arch_initcall(sh5_devices_setup);
 
 void __init plat_early_device_setup(void)
 {

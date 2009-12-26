@@ -59,6 +59,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/tty.h>
+#include <linux/serial.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_flip.h>
 #include <linux/module.h>
@@ -462,11 +463,18 @@ urbs:
 
 		rcv->buffer = buf;
 
-		usb_fill_bulk_urb(rcv->urb, acm->dev,
-				  acm->rx_endpoint,
-				  buf->base,
-				  acm->readsize,
-				  acm_read_bulk, rcv);
+		if (acm->is_int_ep)
+			usb_fill_int_urb(rcv->urb, acm->dev,
+					 acm->rx_endpoint,
+					 buf->base,
+					 acm->readsize,
+					 acm_read_bulk, rcv, acm->bInterval);
+		else
+			usb_fill_bulk_urb(rcv->urb, acm->dev,
+					  acm->rx_endpoint,
+					  buf->base,
+					  acm->readsize,
+					  acm_read_bulk, rcv);
 		rcv->urb->transfer_dma = buf->dma;
 		rcv->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
@@ -601,8 +609,9 @@ static int acm_tty_open(struct tty_struct *tty, struct file *filp)
 
 	acm->throttle = 0;
 
-	tasklet_schedule(&acm->urb_task);
+	set_bit(ASYNCB_INITIALIZED, &acm->port.flags);
 	rv = tty_port_block_til_ready(&acm->port, tty, filp);
+	tasklet_schedule(&acm->urb_task);
 done:
 	mutex_unlock(&acm->mutex);
 err_out:
@@ -677,15 +686,21 @@ static void acm_tty_close(struct tty_struct *tty, struct file *filp)
 
 	/* Perform the closing process and see if we need to do the hardware
 	   shutdown */
-	if (!acm || tty_port_close_start(&acm->port, tty, filp) == 0)
+	if (!acm)
 		return;
+	if (tty_port_close_start(&acm->port, tty, filp) == 0) {
+		mutex_lock(&open_mutex);
+		if (!acm->dev) {
+			tty_port_tty_set(&acm->port, NULL);
+			acm_tty_unregister(acm);
+			tty->driver_data = NULL;
+		}
+		mutex_unlock(&open_mutex);
+		return;
+	}
 	acm_port_down(acm, 0);
 	tty_port_close_end(&acm->port, tty);
-	mutex_lock(&open_mutex);
 	tty_port_tty_set(&acm->port, NULL);
-	if (!acm->dev)
-		acm_tty_unregister(acm);
-	mutex_unlock(&open_mutex);
 }
 
 static int acm_tty_write(struct tty_struct *tty,
@@ -740,7 +755,7 @@ static int acm_tty_chars_in_buffer(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
 	if (!ACM_READY(acm))
-		return -EINVAL;
+		return 0;
 	/*
 	 * This is inaccurate (overcounts), but it works.
 	 */
@@ -851,10 +866,7 @@ static void acm_tty_set_termios(struct tty_struct *tty,
 	if (!ACM_READY(acm))
 		return;
 
-	/* FIXME: Needs to support the tty_baud interface */
-	/* FIXME: Broken on sparc */
-	newline.dwDTERate = cpu_to_le32p(acm_tty_speed +
-		(termios->c_cflag & CBAUD & ~CBAUDEX) + (termios->c_cflag & CBAUDEX ? 15 : 0));
+	newline.dwDTERate = cpu_to_le32(tty_get_baud_rate(tty));
 	newline.bCharFormat = termios->c_cflag & CSTOPB ? 2 : 0;
 	newline.bParityType = termios->c_cflag & PARENB ?
 				(termios->c_cflag & PARODD ? 1 : 2) +
@@ -1173,6 +1185,9 @@ made_compressed_probe:
 	spin_lock_init(&acm->read_lock);
 	mutex_init(&acm->mutex);
 	acm->rx_endpoint = usb_rcvbulkpipe(usb_dev, epread->bEndpointAddress);
+	acm->is_int_ep = usb_endpoint_xfer_int(epread);
+	if (acm->is_int_ep)
+		acm->bInterval = epread->bInterval;
 	tty_port_init(&acm->port);
 	acm->port.ops = &acm_port_ops;
 
@@ -1227,9 +1242,14 @@ made_compressed_probe:
 			goto alloc_fail7;
 		}
 
-		usb_fill_bulk_urb(snd->urb, usb_dev,
-			usb_sndbulkpipe(usb_dev, epwrite->bEndpointAddress),
-			NULL, acm->writesize, acm_write_bulk, snd);
+		if (usb_endpoint_xfer_int(epwrite))
+			usb_fill_int_urb(snd->urb, usb_dev,
+				usb_sndbulkpipe(usb_dev, epwrite->bEndpointAddress),
+				NULL, acm->writesize, acm_write_bulk, snd, epwrite->bInterval);
+		else
+			usb_fill_bulk_urb(snd->urb, usb_dev,
+				usb_sndbulkpipe(usb_dev, epwrite->bEndpointAddress),
+				NULL, acm->writesize, acm_write_bulk, snd);
 		snd->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 		snd->instance = acm;
 	}
@@ -1441,6 +1461,12 @@ err_out:
 }
 
 #endif /* CONFIG_PM */
+
+#define NOKIA_PCSUITE_ACM_INFO(x) \
+		USB_DEVICE_AND_INTERFACE_INFO(0x0421, x, \
+		USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM, \
+		USB_CDC_ACM_PROTO_VENDOR)
+
 /*
  * USB driver structure.
  */
@@ -1499,6 +1525,57 @@ static struct usb_device_id acm_ids[] = {
 	.driver_info = NO_UNION_NORMAL, /* reports zero length descriptor */
 	},
 
+	/* Nokia S60 phones expose two ACM channels. The first is
+	 * a modem and is picked up by the standard AT-command
+	 * information below. The second is 'vendor-specific' but
+	 * is treated as a serial device at the S60 end, so we want
+	 * to expose it on Linux too. */
+	{ NOKIA_PCSUITE_ACM_INFO(0x042D), }, /* Nokia 3250 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x04D8), }, /* Nokia 5500 Sport */
+	{ NOKIA_PCSUITE_ACM_INFO(0x04C9), }, /* Nokia E50 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0419), }, /* Nokia E60 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x044D), }, /* Nokia E61 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0001), }, /* Nokia E61i */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0475), }, /* Nokia E62 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0508), }, /* Nokia E65 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0418), }, /* Nokia E70 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0425), }, /* Nokia N71 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0486), }, /* Nokia N73 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x04DF), }, /* Nokia N75 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x000e), }, /* Nokia N77 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0445), }, /* Nokia N80 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x042F), }, /* Nokia N91 & N91 8GB */
+	{ NOKIA_PCSUITE_ACM_INFO(0x048E), }, /* Nokia N92 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0420), }, /* Nokia N93 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x04E6), }, /* Nokia N93i  */
+	{ NOKIA_PCSUITE_ACM_INFO(0x04B2), }, /* Nokia 5700 XpressMusic */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0134), }, /* Nokia 6110 Navigator (China) */
+	{ NOKIA_PCSUITE_ACM_INFO(0x046E), }, /* Nokia 6110 Navigator */
+	{ NOKIA_PCSUITE_ACM_INFO(0x002f), }, /* Nokia 6120 classic &  */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0088), }, /* Nokia 6121 classic */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00fc), }, /* Nokia 6124 classic */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0042), }, /* Nokia E51 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00b0), }, /* Nokia E66 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00ab), }, /* Nokia E71 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0481), }, /* Nokia N76 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0007), }, /* Nokia N81 & N81 8GB */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0071), }, /* Nokia N82 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x04F0), }, /* Nokia N95 & N95-3 NAM */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0070), }, /* Nokia N95 8GB  */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00e9), }, /* Nokia 5320 XpressMusic */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0099), }, /* Nokia 6210 Navigator, RM-367 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0128), }, /* Nokia 6210 Navigator, RM-419 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x008f), }, /* Nokia 6220 Classic */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00a0), }, /* Nokia 6650 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x007b), }, /* Nokia N78 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0094), }, /* Nokia N85 */
+	{ NOKIA_PCSUITE_ACM_INFO(0x003a), }, /* Nokia N96 & N96-3  */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00e9), }, /* Nokia 5320 XpressMusic */
+	{ NOKIA_PCSUITE_ACM_INFO(0x0108), }, /* Nokia 5320 XpressMusic 2G */
+	{ NOKIA_PCSUITE_ACM_INFO(0x01f5), }, /* Nokia N97, RM-505 */
+
+	/* NOTE: non-Nokia COMM/ACM/0xff is likely MSFT RNDIS... NOT a modem! */
+
 	/* control interfaces with various AT-command sets */
 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM,
 		USB_CDC_ACM_PROTO_AT_V25TER) },
@@ -1513,7 +1590,6 @@ static struct usb_device_id acm_ids[] = {
 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM,
 		USB_CDC_ACM_PROTO_AT_CDMA) },
 
-	/* NOTE:  COMM/ACM/0xff is likely MSFT RNDIS ... NOT a modem!! */
 	{ }
 };
 

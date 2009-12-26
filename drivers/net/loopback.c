@@ -69,7 +69,8 @@ struct pcpu_lstats {
  * The higher levels take care of making this non-reentrant (it's
  * called with bh's disabled).
  */
-static int loopback_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t loopback_xmit(struct sk_buff *skb,
+				 struct net_device *dev)
 {
 	struct pcpu_lstats *pcpu_lstats, *lb_stats;
 	int len;
@@ -80,7 +81,7 @@ static int loopback_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	/* it's OK to use per_cpu_ptr() because BHs are off */
 	pcpu_lstats = dev->ml_priv;
-	lb_stats = per_cpu_ptr(pcpu_lstats, smp_processor_id());
+	lb_stats = this_cpu_ptr(pcpu_lstats);
 
 	len = skb->len;
 	if (likely(netif_rx(skb) == NET_RX_SUCCESS)) {
@@ -89,7 +90,7 @@ static int loopback_xmit(struct sk_buff *skb, struct net_device *dev)
 	} else
 		lb_stats->drops++;
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 static struct net_device_stats *loopback_get_stats(struct net_device *dev)
@@ -206,20 +207,12 @@ static __net_init int loopback_net_init(struct net *net)
 out_free_netdev:
 	free_netdev(dev);
 out:
-	if (net == &init_net)
+	if (net_eq(net, &init_net))
 		panic("loopback: Failed to register netdevice: %d\n", err);
 	return err;
-}
-
-static __net_exit void loopback_net_exit(struct net *net)
-{
-	struct net_device *dev = net->loopback_dev;
-
-	unregister_netdev(dev);
 }
 
 /* Registered in net/core/dev.c */
 struct pernet_operations __net_initdata loopback_net_ops = {
        .init = loopback_net_init,
-       .exit = loopback_net_exit,
 };

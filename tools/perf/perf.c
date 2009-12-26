@@ -12,6 +12,9 @@
 #include "util/cache.h"
 #include "util/quote.h"
 #include "util/run-command.h"
+#include "util/parse-events.h"
+#include "util/string.h"
+#include "util/debugfs.h"
 
 const char perf_usage_string[] =
 	"perf [--version] [--help] COMMAND [ARGS]";
@@ -24,6 +27,8 @@ struct pager_config {
 	const char *cmd;
 	int val;
 };
+
+static char debugfs_mntpt[MAXPATHLEN];
 
 static int pager_command_config(const char *var, const char *value, void *data)
 {
@@ -56,6 +61,15 @@ static void commit_pager_choice(void) {
 	}
 }
 
+static void set_debugfs_path(void)
+{
+	char *path;
+
+	path = getenv(PERF_DEBUGFS_ENVIRONMENT);
+	snprintf(debugfs_path, MAXPATHLEN, "%s/%s", path ?: debugfs_mntpt,
+		 "tracing/events");
+}
+
 static int handle_options(const char*** argv, int* argc, int* envchanged)
 {
 	int handled = 0;
@@ -76,8 +90,8 @@ static int handle_options(const char*** argv, int* argc, int* envchanged)
 		/*
 		 * Check remaining flags.
 		 */
-		if (!prefixcmp(cmd, "--exec-path")) {
-			cmd += 11;
+		if (!prefixcmp(cmd, CMD_EXEC_PATH)) {
+			cmd += strlen(CMD_EXEC_PATH);
 			if (*cmd == '=')
 				perf_set_argv_exec_path(cmd + 1);
 			else {
@@ -104,8 +118,8 @@ static int handle_options(const char*** argv, int* argc, int* envchanged)
 			(*argv)++;
 			(*argc)--;
 			handled++;
-		} else if (!prefixcmp(cmd, "--perf-dir=")) {
-			setenv(PERF_DIR_ENVIRONMENT, cmd + 10, 1);
+		} else if (!prefixcmp(cmd, CMD_PERF_DIR)) {
+			setenv(PERF_DIR_ENVIRONMENT, cmd + strlen(CMD_PERF_DIR), 1);
 			if (envchanged)
 				*envchanged = 1;
 		} else if (!strcmp(cmd, "--work-tree")) {
@@ -118,8 +132,24 @@ static int handle_options(const char*** argv, int* argc, int* envchanged)
 				*envchanged = 1;
 			(*argv)++;
 			(*argc)--;
-		} else if (!prefixcmp(cmd, "--work-tree=")) {
-			setenv(PERF_WORK_TREE_ENVIRONMENT, cmd + 12, 1);
+		} else if (!prefixcmp(cmd, CMD_WORK_TREE)) {
+			setenv(PERF_WORK_TREE_ENVIRONMENT, cmd + strlen(CMD_WORK_TREE), 1);
+			if (envchanged)
+				*envchanged = 1;
+		} else if (!strcmp(cmd, "--debugfs-dir")) {
+			if (*argc < 2) {
+				fprintf(stderr, "No directory given for --debugfs-dir.\n");
+				usage(perf_usage_string);
+			}
+			strncpy(debugfs_mntpt, (*argv)[1], MAXPATHLEN);
+			debugfs_mntpt[MAXPATHLEN - 1] = '\0';
+			if (envchanged)
+				*envchanged = 1;
+			(*argv)++;
+			(*argc)--;
+		} else if (!prefixcmp(cmd, CMD_DEBUGFS_DIR)) {
+			strncpy(debugfs_mntpt, cmd + strlen(CMD_DEBUGFS_DIR), MAXPATHLEN);
+			debugfs_mntpt[MAXPATHLEN - 1] = '\0';
 			if (envchanged)
 				*envchanged = 1;
 		} else {
@@ -228,9 +258,7 @@ static int run_builtin(struct cmd_struct *p, int argc, const char **argv)
 	if (use_pager == -1 && p->option & USE_PAGER)
 		use_pager = 1;
 	commit_pager_choice();
-
-	if (p->option & NEED_WORK_TREE)
-		/* setup_work_tree() */;
+	set_debugfs_path();
 
 	status = p->fn(argc, argv, prefix);
 	if (status)
@@ -257,16 +285,24 @@ static void handle_internal_command(int argc, const char **argv)
 {
 	const char *cmd = argv[0];
 	static struct cmd_struct commands[] = {
-		{ "help", cmd_help, 0 },
-		{ "list", cmd_list, 0 },
-		{ "record", cmd_record, 0 },
-		{ "report", cmd_report, 0 },
-		{ "stat", cmd_stat, 0 },
-		{ "top", cmd_top, 0 },
-		{ "annotate", cmd_annotate, 0 },
-		{ "version", cmd_version, 0 },
+		{ "buildid-list", cmd_buildid_list, 0 },
+		{ "diff",	cmd_diff,	0 },
+		{ "help",	cmd_help,	0 },
+		{ "list",	cmd_list,	0 },
+		{ "record",	cmd_record,	0 },
+		{ "report",	cmd_report,	0 },
+		{ "bench",	cmd_bench,	0 },
+		{ "stat",	cmd_stat,	0 },
+		{ "timechart",	cmd_timechart,	0 },
+		{ "top",	cmd_top,	0 },
+		{ "annotate",	cmd_annotate,	0 },
+		{ "version",	cmd_version,	0 },
+		{ "trace",	cmd_trace,	0 },
+		{ "sched",	cmd_sched,	0 },
+		{ "probe",	cmd_probe,	0 },
+		{ "kmem",	cmd_kmem,	0 },
 	};
-	int i;
+	unsigned int i;
 	static const char ext[] = STRIP_EXTENSION;
 
 	if (sizeof(ext) > 1) {
@@ -349,6 +385,16 @@ static int run_argv(int *argcp, const char ***argv)
 	return done_alias;
 }
 
+/* mini /proc/mounts parser: searching for "^blah /mount/point debugfs" */
+static void get_debugfs_mntpt(void)
+{
+	const char *path = debugfs_find_mountpoint();
+
+	if (path)
+		strncpy(debugfs_mntpt, path, sizeof(debugfs_mntpt));
+	else
+		debugfs_mntpt[0] = '\0';
+}
 
 int main(int argc, const char **argv)
 {
@@ -357,7 +403,8 @@ int main(int argc, const char **argv)
 	cmd = perf_extract_argv0_path(argv[0]);
 	if (!cmd)
 		cmd = "perf-help";
-
+	/* get debugfs mount point from /proc/mounts */
+	get_debugfs_mntpt();
 	/*
 	 * "perf-xxxx" is the same as "perf xxxx", but we obviously:
 	 *
@@ -380,6 +427,7 @@ int main(int argc, const char **argv)
 	argc--;
 	handle_options(&argv, &argc, NULL);
 	commit_pager_choice();
+	set_debugfs_path();
 	if (argc > 0) {
 		if (!prefixcmp(argv[0], "--"))
 			argv[0] += 2;

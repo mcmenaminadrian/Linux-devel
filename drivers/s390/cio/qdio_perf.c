@@ -64,6 +64,8 @@ static int qdio_perf_proc_show(struct seq_file *m, void *v)
 		   (long)atomic_long_read(&perf_stats.fast_requeue));
 	seq_printf(m, "Number of outbound target full condition\t: %li\n",
 		   (long)atomic_long_read(&perf_stats.outbound_target_full));
+	seq_printf(m, "Number of inbound queue full condition\t\t: %li\n",
+		   (long)atomic_long_read(&perf_stats.inbound_queue_full));
 	seq_printf(m, "Number of outbound tasklet mod_timer calls\t: %li\n",
 		   (long)atomic_long_read(&perf_stats.debug_tl_out_timer));
 	seq_printf(m, "Number of stop polling calls\t\t\t: %li\n",
@@ -84,7 +86,7 @@ static int qdio_perf_seq_open(struct inode *inode, struct file *filp)
 	return single_open(filp, qdio_perf_proc_show, NULL);
 }
 
-static struct file_operations qdio_perf_proc_fops = {
+static const struct file_operations qdio_perf_proc_fops = {
 	.owner	 = THIS_MODULE,
 	.open	 = qdio_perf_seq_open,
 	.read	 = seq_read,

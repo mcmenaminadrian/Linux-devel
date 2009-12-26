@@ -46,6 +46,7 @@ CROSS=
 # directory for object and other files used by this script
 object=arch/powerpc/boot
 objbin=$object
+dtc=scripts/dtc/dtc
 
 # directory for working files
 tmpdir=.
@@ -124,7 +125,7 @@ if [ -n "$dts" ]; then
     if [ -z "$dtb" ]; then
 	dtb="$platform.dtb"
     fi
-    $object/dtc -O dtb -o "$dtb" -b 0 "$dts"
+    $dtc -O dtb -o "$dtb" -b 0 "$dts"
 fi
 
 if [ -z "$kernel" ]; then
@@ -228,6 +229,10 @@ asp834x-redboot)
 xpedite52*)
     link_address='0x1400000'
     platformo=$object/cuboot-85xx.o
+    ;;
+gamecube|wii)
+    link_address='0x600000'
+    platformo="$object/$platform-head.o $object/$platform.o"
     ;;
 esac
 

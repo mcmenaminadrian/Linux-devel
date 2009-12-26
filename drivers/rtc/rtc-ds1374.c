@@ -283,7 +283,7 @@ static void ds1374_work(struct work_struct *work)
 
 	stat = i2c_smbus_read_byte_data(client, DS1374_REG_SR);
 	if (stat < 0)
-		return;
+		goto unlock;
 
 	if (stat & DS1374_REG_SR_AF) {
 		stat &= ~DS1374_REG_SR_AF;
@@ -302,7 +302,7 @@ static void ds1374_work(struct work_struct *work)
 out:
 	if (!ds1374->exiting)
 		enable_irq(client->irq);
-
+unlock:
 	mutex_unlock(&ds1374->mutex);
 }
 
@@ -383,6 +383,8 @@ static int ds1374_probe(struct i2c_client *client,
 			dev_err(&client->dev, "unable to request IRQ\n");
 			goto out_free;
 		}
+
+		device_set_wakeup_capable(&client->dev, 1);
 	}
 
 	ds1374->rtc = rtc_device_register(client->name, &client->dev,

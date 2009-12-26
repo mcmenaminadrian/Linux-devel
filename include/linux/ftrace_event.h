@@ -1,9 +1,10 @@
 #ifndef _LINUX_FTRACE_EVENT_H
 #define _LINUX_FTRACE_EVENT_H
 
-#include <linux/trace_seq.h>
 #include <linux/ring_buffer.h>
+#include <linux/trace_seq.h>
 #include <linux/percpu.h>
+#include <linux/hardirq.h>
 
 struct trace_array;
 struct tracer;
@@ -34,7 +35,7 @@ struct trace_entry {
 	unsigned char		flags;
 	unsigned char		preempt_count;
 	int			pid;
-	int			tgid;
+	int			lock_depth;
 };
 
 #define FTRACE_MAX_EVENT						\
@@ -56,6 +57,7 @@ struct trace_iterator {
 	/* The below is zeroed out in pipe_read */
 	struct trace_seq	seq;
 	struct trace_entry	*ent;
+	int			leftover;
 	int			cpu;
 	u64			ts;
 
@@ -89,17 +91,25 @@ enum print_line_t {
 	TRACE_TYPE_NO_CONSUME	= 3	/* Handled but ask to not consume */
 };
 
-
+void tracing_generic_entry_update(struct trace_entry *entry,
+				  unsigned long flags,
+				  int pc);
 struct ring_buffer_event *
-trace_current_buffer_lock_reserve(int type, unsigned long len,
+trace_current_buffer_lock_reserve(struct ring_buffer **current_buffer,
+				  int type, unsigned long len,
 				  unsigned long flags, int pc);
-void trace_current_buffer_unlock_commit(struct ring_buffer_event *event,
+void trace_current_buffer_unlock_commit(struct ring_buffer *buffer,
+					struct ring_buffer_event *event,
 					unsigned long flags, int pc);
-void trace_nowake_buffer_unlock_commit(struct ring_buffer_event *event,
+void trace_nowake_buffer_unlock_commit(struct ring_buffer *buffer,
+				       struct ring_buffer_event *event,
 					unsigned long flags, int pc);
-void trace_current_buffer_discard_commit(struct ring_buffer_event *event);
+void trace_current_buffer_discard_commit(struct ring_buffer *buffer,
+					 struct ring_buffer_event *event);
 
 void tracing_record_cmdline(struct task_struct *tsk);
+
+struct event_filter;
 
 struct ftrace_event_call {
 	struct list_head	list;
@@ -108,36 +118,52 @@ struct ftrace_event_call {
 	struct dentry		*dir;
 	struct trace_event	*event;
 	int			enabled;
-	int			(*regfunc)(void);
-	void			(*unregfunc)(void);
+	int			(*regfunc)(struct ftrace_event_call *);
+	void			(*unregfunc)(struct ftrace_event_call *);
 	int			id;
-	int			(*raw_init)(void);
-	int			(*show_format)(struct trace_seq *s);
-	int			(*define_fields)(void);
+	int			(*raw_init)(struct ftrace_event_call *);
+	int			(*show_format)(struct ftrace_event_call *,
+					       struct trace_seq *);
+	int			(*define_fields)(struct ftrace_event_call *);
 	struct list_head	fields;
 	int			filter_active;
-	void			*filter;
+	struct event_filter	*filter;
 	void			*mod;
+	void			*data;
 
-#ifdef CONFIG_EVENT_PROFILE
-	atomic_t	profile_count;
-	int		(*profile_enable)(struct ftrace_event_call *);
-	void		(*profile_disable)(struct ftrace_event_call *);
-#endif
+	int			profile_count;
+	int			(*profile_enable)(struct ftrace_event_call *);
+	void			(*profile_disable)(struct ftrace_event_call *);
 };
 
-#define MAX_FILTER_PRED		32
-#define MAX_FILTER_STR_VAL	128
+#define FTRACE_MAX_PROFILE_SIZE	2048
 
-extern int init_preds(struct ftrace_event_call *call);
+extern char *perf_trace_buf;
+extern char *perf_trace_buf_nmi;
+
+#define MAX_FILTER_PRED		32
+#define MAX_FILTER_STR_VAL	256	/* Should handle KSYM_SYMBOL_LEN */
+
 extern void destroy_preds(struct ftrace_event_call *call);
-extern int filter_match_preds(struct ftrace_event_call *call, void *rec);
-extern int filter_current_check_discard(struct ftrace_event_call *call,
+extern int filter_match_preds(struct event_filter *filter, void *rec);
+extern int filter_current_check_discard(struct ring_buffer *buffer,
+					struct ftrace_event_call *call,
 					void *rec,
 					struct ring_buffer_event *event);
 
-extern int trace_define_field(struct ftrace_event_call *call, char *type,
-			      char *name, int offset, int size, int is_signed);
+enum {
+	FILTER_OTHER = 0,
+	FILTER_STATIC_STRING,
+	FILTER_DYN_STRING,
+	FILTER_PTR_STRING,
+};
+
+extern int trace_event_raw_init(struct ftrace_event_call *call);
+extern int trace_define_field(struct ftrace_event_call *call, const char *type,
+			      const char *name, int offset, int size,
+			      int is_signed, int filter_type);
+extern int trace_add_event_call(struct ftrace_event_call *call);
+extern void trace_remove_event_call(struct ftrace_event_call *call);
 
 #define is_signed_type(type)	(((type)(-1)) < 0)
 
@@ -162,11 +188,13 @@ do {									\
 		__trace_printk(ip, fmt, ##args);			\
 } while (0)
 
-#define __common_field(type, item, is_signed)				\
-	ret = trace_define_field(event_call, #type, "common_" #item,	\
-				 offsetof(typeof(field.ent), item),	\
-				 sizeof(field.ent.item), is_signed);	\
-	if (ret)							\
-		return ret;
+#ifdef CONFIG_EVENT_PROFILE
+struct perf_event;
+extern int ftrace_profile_enable(int event_id);
+extern void ftrace_profile_disable(int event_id);
+extern int ftrace_profile_set_filter(struct perf_event *event, int event_id,
+				     char *filter_str);
+extern void ftrace_profile_free_filter(struct perf_event *event);
+#endif
 
 #endif /* _LINUX_FTRACE_EVENT_H */

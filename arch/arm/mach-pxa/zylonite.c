@@ -31,7 +31,7 @@
 #include <mach/mmc.h>
 #include <mach/ohci.h>
 #include <mach/pxa27x_keypad.h>
-#include <mach/pxa3xx_nand.h>
+#include <plat/pxa3xx_nand.h>
 
 #include "devices.h"
 #include "generic.h"
@@ -290,6 +290,9 @@ static struct pxamci_platform_data zylonite_mci_platform_data = {
 	.init 		= zylonite_mci_init,
 	.exit		= zylonite_mci_exit,
 	.get_ro		= zylonite_mci_ro,
+	.gpio_card_detect = -1,
+	.gpio_card_ro	= -1,
+	.gpio_power	= -1,
 };
 
 static struct pxamci_platform_data zylonite_mci2_platform_data = {
@@ -441,6 +444,10 @@ static inline void zylonite_init_ohci(void) {}
 
 static void __init zylonite_init(void)
 {
+	pxa_set_ffuart_info(NULL);
+	pxa_set_btuart_info(NULL);
+	pxa_set_stuart_info(NULL);
+
 	/* board-processor specific initialization */
 	zylonite_pxa300_init();
 	zylonite_pxa320_init();

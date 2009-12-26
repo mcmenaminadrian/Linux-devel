@@ -555,7 +555,7 @@ int pci_iov_init(struct pci_dev *dev)
 {
 	int pos;
 
-	if (!dev->is_pcie)
+	if (!pci_is_pcie(dev))
 		return -ENODEV;
 
 	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_SRIOV);
@@ -595,6 +595,29 @@ int pci_iov_resource_bar(struct pci_dev *dev, int resno,
 
 	return dev->sriov->pos + PCI_SRIOV_BAR +
 		4 * (resno - PCI_IOV_RESOURCES);
+}
+
+/**
+ * pci_sriov_resource_alignment - get resource alignment for VF BAR
+ * @dev: the PCI device
+ * @resno: the resource number
+ *
+ * Returns the alignment of the VF BAR found in the SR-IOV capability.
+ * This is not the same as the resource size which is defined as
+ * the VF BAR size multiplied by the number of VFs.  The alignment
+ * is just the VF BAR size.
+ */
+int pci_sriov_resource_alignment(struct pci_dev *dev, int resno)
+{
+	struct resource tmp;
+	enum pci_bar_type type;
+	int reg = pci_iov_resource_bar(dev, resno, &type);
+	
+	if (!reg)
+		return 0;
+
+	 __pci_read_base(dev, type, &tmp, reg);
+	return resource_alignment(&tmp);
 }
 
 /**

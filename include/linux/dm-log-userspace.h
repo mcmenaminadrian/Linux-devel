@@ -363,7 +363,7 @@
  * various request types above.  The remaining 24-bits are currently
  * set to zero and are reserved for future use and compatibility concerns.
  *
- * User-space should always use DM_ULOG_REQUEST_TYPE to aquire the
+ * User-space should always use DM_ULOG_REQUEST_TYPE to acquire the
  * request type from the 'request_type' field to maintain forward compatibility.
  */
 #define DM_ULOG_REQUEST_MASK 0xFF
@@ -371,7 +371,18 @@
 	(DM_ULOG_REQUEST_MASK & (request_type))
 
 struct dm_ulog_request {
-	char uuid[DM_UUID_LEN]; /* Ties a request to a specific mirror log */
+	/*
+	 * The local unique identifier (luid) and the universally unique
+	 * identifier (uuid) are used to tie a request to a specific
+	 * mirror log.  A single machine log could probably make due with
+	 * just the 'luid', but a cluster-aware log must use the 'uuid' and
+	 * the 'luid'.  The uuid is what is required for node to node
+	 * communication concerning a particular log, but the 'luid' helps
+	 * differentiate between logs that are being swapped and have the
+	 * same 'uuid'.  (Think "live" and "inactive" device-mapper tables.)
+	 */
+	uint64_t luid;
+	char uuid[DM_UUID_LEN];
 	char padding[7];        /* Padding because DM_UUID_LEN = 129 */
 
 	int32_t error;          /* Used to report back processing errors */

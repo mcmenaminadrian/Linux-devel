@@ -30,7 +30,6 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
 
 /* global data */
-static const char device_name[] = "pcieport-driver";
 
 static int pcie_portdrv_restore_config(struct pci_dev *dev)
 {
@@ -44,7 +43,7 @@ static int pcie_portdrv_restore_config(struct pci_dev *dev)
 }
 
 #ifdef CONFIG_PM
-static struct dev_pm_ops pcie_portdrv_pm_ops = {
+static const struct dev_pm_ops pcie_portdrv_pm_ops = {
 	.suspend	= pcie_port_device_suspend,
 	.resume		= pcie_port_device_resume,
 	.freeze		= pcie_port_device_suspend,
@@ -68,14 +67,16 @@ static struct dev_pm_ops pcie_portdrv_pm_ops = {
  * this port device.
  *
  */
-static int __devinit pcie_portdrv_probe (struct pci_dev *dev, 
-				const struct pci_device_id *id )
+static int __devinit pcie_portdrv_probe(struct pci_dev *dev,
+					const struct pci_device_id *id)
 {
-	int			status;
+	int status;
 
-	status = pcie_port_device_probe(dev);
-	if (status)
-		return status;
+	if (!pci_is_pcie(dev) ||
+	    ((dev->pcie_type != PCI_EXP_TYPE_ROOT_PORT) &&
+	     (dev->pcie_type != PCI_EXP_TYPE_UPSTREAM) &&
+	     (dev->pcie_type != PCI_EXP_TYPE_DOWNSTREAM)))
+		return -ENODEV;
 
         if (!dev->irq && dev->pin) {
 		dev_warn(&dev->dev, "device [%04x:%04x] has invalid IRQ; "
@@ -205,6 +206,7 @@ static pci_ers_result_t pcie_portdrv_slot_reset(struct pci_dev *dev)
 
 	/* If fatal, restore cfg space for possible link reset at upstream */
 	if (dev->error_state == pci_channel_io_frozen) {
+		dev->state_saved = true;
 		pci_restore_state(dev);
 		pcie_portdrv_restore_config(dev);
 		pci_enable_pcie_error_reporting(dev);
@@ -261,7 +263,7 @@ static struct pci_error_handlers pcie_portdrv_err_handler = {
 };
 
 static struct pci_driver pcie_portdriver = {
-	.name		= (char *)device_name,
+	.name		= "pcieport",
 	.id_table	= &port_pci_ids[0],
 
 	.probe		= pcie_portdrv_probe,

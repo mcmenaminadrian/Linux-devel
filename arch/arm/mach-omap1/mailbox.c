@@ -14,7 +14,7 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <mach/mailbox.h>
+#include <plat/mailbox.h>
 #include <mach/irqs.h>
 
 #define MAILBOX_ARM2DSP1		0x00
@@ -203,5 +203,5 @@ module_exit(omap1_mbox_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("omap mailbox: omap1 architecture specific functions");
-MODULE_AUTHOR("Hiroshi DOYU" <Hiroshi.DOYU@nokia.com>);
+MODULE_AUTHOR("Hiroshi DOYU <Hiroshi.DOYU@nokia.com>");
 MODULE_ALIAS("platform:omap1-mailbox");

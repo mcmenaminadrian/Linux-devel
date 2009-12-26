@@ -31,11 +31,13 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/firmware.h>
+#include <linux/smp_lock.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/cx2341x.h>
 
 #include "cx23885.h"
+#include "cx23885-ioctl.h"
 
 #define CX23885_FIRM_IMAGE_SIZE 376836
 #define CX23885_FIRM_IMAGE_NAME "v4l-cx23885-enc.fw"
@@ -57,7 +59,8 @@ MODULE_PARM_DESC(v4l_debug, "enable V4L debug messages");
 
 #define dprintk(level, fmt, arg...)\
 	do { if (v4l_debug >= level) \
-		printk(KERN_DEBUG "%s: " fmt, dev->name , ## arg);\
+		printk(KERN_DEBUG "%s: " fmt, \
+		(dev) ? dev->name : "cx23885[?]", ## arg); \
 	} while (0)
 
 static struct cx23885_tvnorm cx23885_tvnorms[] = {
@@ -316,7 +319,7 @@ static int mc417_wait_ready(struct cx23885_dev *dev)
 	}
 }
 
-static int mc417_register_write(struct cx23885_dev *dev, u16 address, u32 value)
+int mc417_register_write(struct cx23885_dev *dev, u16 address, u32 value)
 {
 	u32 regval;
 
@@ -380,7 +383,7 @@ static int mc417_register_write(struct cx23885_dev *dev, u16 address, u32 value)
 	return mc417_wait_ready(dev);
 }
 
-static int mc417_register_read(struct cx23885_dev *dev, u16 address, u32 *value)
+int mc417_register_read(struct cx23885_dev *dev, u16 address, u32 *value)
 {
 	int retval;
 	u32 regval;
@@ -628,6 +631,39 @@ int mc417_memory_read(struct cx23885_dev *dev, u32 address, u32 *value)
 	return retval;
 }
 
+void mc417_gpio_set(struct cx23885_dev *dev, u32 mask)
+{
+	u32 val;
+
+	/* Set the gpio value */
+	mc417_register_read(dev, 0x900C, &val);
+	val |= (mask & 0x000ffff);
+	mc417_register_write(dev, 0x900C, val);
+}
+
+void mc417_gpio_clear(struct cx23885_dev *dev, u32 mask)
+{
+	u32 val;
+
+	/* Clear the gpio value */
+	mc417_register_read(dev, 0x900C, &val);
+	val &= ~(mask & 0x0000ffff);
+	mc417_register_write(dev, 0x900C, val);
+}
+
+void mc417_gpio_enable(struct cx23885_dev *dev, u32 mask, int asoutput)
+{
+	u32 val;
+
+	/* Enable GPIO direction bits */
+	mc417_register_read(dev, 0x9020, &val);
+	if (asoutput)
+		val |= (mask & 0x0000ffff);
+	else
+		val &= ~(mask & 0x0000ffff);
+
+	mc417_register_write(dev, 0x9020, val);
+}
 /* ------------------------------------------------------------------ */
 
 /* MPEG encoder API */
@@ -953,25 +989,8 @@ static int cx23885_load_firmware(struct cx23885_dev *dev)
 	retval |= mc417_register_write(dev, IVTV_REG_HW_BLOCKS,
 		IVTV_CMD_HW_BLOCKS_RST);
 
-	/* Restore GPIO settings, make sure EIO14 is enabled as an output. */
-	dprintk(2, "%s: GPIO output EIO 0-15 was = 0x%x\n",
-		__func__, gpio_output);
-	/* Power-up seems to have GPIOs AFU. This was causing digital side
-	 * to fail at power-up. Seems GPIOs should be set to 0x10ff0411 at
-	 * power-up.
-	 * gpio_output |= (1<<14);
-	 */
-	/* Note: GPIO14 is specific to the HVR1800 here */
-	gpio_output = 0x10ff0411 | (1<<14);
-	retval |= mc417_register_write(dev, 0x9020, gpio_output | (1<<14));
-	dprintk(2, "%s: GPIO output EIO 0-15 now = 0x%x\n",
-		__func__, gpio_output);
-
-	dprintk(1, "%s: GPIO value  EIO 0-15 was = 0x%x\n",
-		__func__, value);
-	value |= (1<<14);
-	dprintk(1, "%s: GPIO value  EIO 0-15 now = 0x%x\n",
-		__func__, value);
+	/* F/W power up disturbs the GPIOs, restore state */
+	retval |= mc417_register_write(dev, 0x9020, gpio_output);
 	retval |= mc417_register_write(dev, 0x900C, value);
 
 	retval |= mc417_register_read(dev, IVTV_REG_VPU, &value);
@@ -1549,27 +1568,10 @@ static int vidioc_queryctrl(struct file *file, void *priv,
 
 static int mpeg_open(struct file *file)
 {
-	int minor = video_devdata(file)->minor;
-	struct cx23885_dev *h, *dev = NULL;
-	struct list_head *list;
+	struct cx23885_dev *dev = video_drvdata(file);
 	struct cx23885_fh *fh;
 
 	dprintk(2, "%s()\n", __func__);
-
-	lock_kernel();
-	list_for_each(list, &cx23885_devlist) {
-		h = list_entry(list, struct cx23885_dev, devlist);
-		if (h->v4l_device &&
-		    h->v4l_device->minor == minor) {
-			dev = h;
-			break;
-		}
-	}
-
-	if (dev == NULL) {
-		unlock_kernel();
-		return -ENODEV;
-	}
 
 	/* allocate + initialize per filehandle data */
 	fh = kzalloc(sizeof(*fh), GFP_KERNEL);
@@ -1577,6 +1579,8 @@ static int mpeg_open(struct file *file)
 		unlock_kernel();
 		return -ENOMEM;
 	}
+
+	lock_kernel();
 
 	file->private_data = fh;
 	fh->dev      = dev;
@@ -1676,6 +1680,7 @@ static struct v4l2_file_operations mpeg_fops = {
 	.read	       = mpeg_read,
 	.poll          = mpeg_poll,
 	.mmap	       = mpeg_mmap,
+	.ioctl	       = video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops mpeg_ioctl_ops = {
@@ -1705,13 +1710,19 @@ static const struct v4l2_ioctl_ops mpeg_ioctl_ops = {
 	.vidioc_log_status	 = vidioc_log_status,
 	.vidioc_querymenu	 = vidioc_querymenu,
 	.vidioc_queryctrl	 = vidioc_queryctrl,
+	.vidioc_g_chip_ident	 = cx23885_g_chip_ident,
+#ifdef CONFIG_VIDEO_ADV_DEBUG
+	.vidioc_g_register	 = cx23885_g_register,
+	.vidioc_s_register	 = cx23885_s_register,
+#endif
 };
 
 static struct video_device cx23885_mpeg_template = {
 	.name          = "cx23885",
 	.fops          = &mpeg_fops,
 	.ioctl_ops     = &mpeg_ioctl_ops,
-	.minor         = -1,
+	.tvnorms       = CX23885_NORMS,
+	.current_norm  = V4L2_STD_NTSC_M,
 };
 
 void cx23885_417_unregister(struct cx23885_dev *dev)
@@ -1719,7 +1730,7 @@ void cx23885_417_unregister(struct cx23885_dev *dev)
 	dprintk(1, "%s()\n", __func__);
 
 	if (dev->v4l_device) {
-		if (-1 != dev->v4l_device->minor)
+		if (video_is_registered(dev->v4l_device))
 			video_unregister_device(dev->v4l_device);
 		else
 			video_device_release(dev->v4l_device);
@@ -1776,6 +1787,7 @@ int cx23885_417_register(struct cx23885_dev *dev)
 	/* Allocate and initialize V4L video device */
 	dev->v4l_device = cx23885_video_dev_alloc(tsport,
 		dev->pci, &cx23885_mpeg_template, "mpeg");
+	video_set_drvdata(dev->v4l_device, dev);
 	err = video_register_device(dev->v4l_device,
 		VFL_TYPE_GRABBER, -1);
 	if (err < 0) {
@@ -1783,11 +1795,8 @@ int cx23885_417_register(struct cx23885_dev *dev)
 		return err;
 	}
 
-	/* Initialize MC417 registers */
-	cx23885_mc417_init(dev);
-
-	printk(KERN_INFO "%s: registered device video%d [mpeg]\n",
-	       dev->name, dev->v4l_device->num);
+	printk(KERN_INFO "%s: registered device %s [mpeg]\n",
+	       dev->name, video_device_node_name(dev->v4l_device));
 
 	return 0;
 }

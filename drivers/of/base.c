@@ -9,7 +9,8 @@
  *
  *  Adapted for sparc and sparc64 by David S. Miller davem@davemloft.net
  *
- *  Reconsolidated from arch/x/kernel/prom.c by Stephen Rothwell.
+ *  Reconsolidated from arch/x/kernel/prom.c by Stephen Rothwell and
+ *  Grant Likely.
  *
  *      This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License
@@ -81,6 +82,29 @@ struct property *of_find_property(const struct device_node *np,
 	return pp;
 }
 EXPORT_SYMBOL(of_find_property);
+
+/**
+ * of_find_all_nodes - Get next node in global list
+ * @prev:	Previous node or NULL to start iteration
+ *		of_node_put() will be called on it
+ *
+ * Returns a node pointer with refcount incremented, use
+ * of_node_put() on it when done.
+ */
+struct device_node *of_find_all_nodes(struct device_node *prev)
+{
+	struct device_node *np;
+
+	read_lock(&devtree_lock);
+	np = prev ? prev->allnext : allnodes;
+	for (; np != NULL; np = np->allnext)
+		if (of_node_get(np))
+			break;
+	of_node_put(prev);
+	read_unlock(&devtree_lock);
+	return np;
+}
+EXPORT_SYMBOL(of_find_all_nodes);
 
 /*
  * Find a property with a given name for a given node
@@ -447,7 +471,6 @@ struct of_modalias_table {
 static struct of_modalias_table of_modalias_table[] = {
 	{ "fsl,mcu-mpc8349emitx", "mcu-mpc8349emitx" },
 	{ "mmc-spi-slot", "mmc_spi" },
-	{ "stm,m25p40", "m25p80" },
 };
 
 /**

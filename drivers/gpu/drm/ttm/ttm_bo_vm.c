@@ -101,6 +101,9 @@ static int ttm_bo_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		return VM_FAULT_NOPAGE;
 	}
 
+	if (bdev->driver->fault_reserve_notify)
+		bdev->driver->fault_reserve_notify(bo);
+
 	/*
 	 * Wait for buffer data in transit, due to a pipelined
 	 * move.
@@ -111,7 +114,7 @@ static int ttm_bo_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		ret = ttm_bo_wait(bo, false, true, false);
 		spin_unlock(&bo->lock);
 		if (unlikely(ret != 0)) {
-			retval = (ret != -ERESTART) ?
+			retval = (ret != -ERESTARTSYS) ?
 			    VM_FAULT_SIGBUS : VM_FAULT_NOPAGE;
 			goto out_unlock;
 		}
@@ -225,7 +228,7 @@ static void ttm_bo_vm_close(struct vm_area_struct *vma)
 	vma->vm_private_data = NULL;
 }
 
-static struct vm_operations_struct ttm_bo_vm_ops = {
+static const struct vm_operations_struct ttm_bo_vm_ops = {
 	.fault = ttm_bo_vm_fault,
 	.open = ttm_bo_vm_open,
 	.close = ttm_bo_vm_close
@@ -317,7 +320,7 @@ ssize_t ttm_bo_io(struct ttm_bo_device *bdev, struct file *filp,
 		return -EFAULT;
 
 	driver = bo->bdev->driver;
-	if (unlikely(driver->verify_access)) {
+	if (unlikely(!driver->verify_access)) {
 		ret = -EPERM;
 		goto out_unref;
 	}
@@ -327,7 +330,7 @@ ssize_t ttm_bo_io(struct ttm_bo_device *bdev, struct file *filp,
 		goto out_unref;
 
 	kmap_offset = dev_offset - bo->vm_node->start;
-	if (unlikely(kmap_offset) >= bo->num_pages) {
+	if (unlikely(kmap_offset >= bo->num_pages)) {
 		ret = -EFBIG;
 		goto out_unref;
 	}
@@ -346,9 +349,6 @@ ssize_t ttm_bo_io(struct ttm_bo_device *bdev, struct file *filp,
 	switch (ret) {
 	case 0:
 		break;
-	case -ERESTART:
-		ret = -EINTR;
-		goto out_unref;
 	case -EBUSY:
 		ret = -EAGAIN;
 		goto out_unref;
@@ -401,7 +401,7 @@ ssize_t ttm_bo_fbdev_io(struct ttm_buffer_object *bo, const char __user *wbuf,
 	bool dummy;
 
 	kmap_offset = (*f_pos >> PAGE_SHIFT);
-	if (unlikely(kmap_offset) >= bo->num_pages)
+	if (unlikely(kmap_offset >= bo->num_pages))
 		return -EFBIG;
 
 	page_offset = *f_pos & ~PAGE_MASK;
@@ -418,8 +418,6 @@ ssize_t ttm_bo_fbdev_io(struct ttm_buffer_object *bo, const char __user *wbuf,
 	switch (ret) {
 	case 0:
 		break;
-	case -ERESTART:
-		return -EINTR;
 	case -EBUSY:
 		return -EAGAIN;
 	default:

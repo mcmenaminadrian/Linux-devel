@@ -99,6 +99,7 @@ config FUJITSU_LAPTOP
 	depends on ACPI
 	depends on INPUT
 	depends on BACKLIGHT_CLASS_DEVICE
+	depends on LEDS_CLASS || LEDS_CLASS=n
 	---help---
 	  This is a driver for laptops built by Fujitsu:
 
@@ -277,31 +278,6 @@ config THINKPAD_ACPI_UNSAFE_LEDS
 	  Say N here, unless you are building a kernel for your own
 	  use, and need to control the important firmware LEDs.
 
-config THINKPAD_ACPI_DOCK
-	bool "Legacy Docking Station Support"
-	depends on THINKPAD_ACPI
-	depends on ACPI_DOCK=n
-	default n
-	---help---
-	  Allows the thinkpad_acpi driver to handle docking station events.
-	  This support was made obsolete by the generic ACPI docking station
-	  support (CONFIG_ACPI_DOCK).  It will allow locking and removing the
-	  laptop from the docking station, but will not properly connect PCI
-	  devices.
-
-	  If you are not sure, say N here.
-
-config THINKPAD_ACPI_BAY
-	bool "Legacy Removable Bay Support"
-	depends on THINKPAD_ACPI
-	default y
-	---help---
-	  Allows the thinkpad_acpi driver to handle removable bays.  It will
-	  electrically disable the device in the bay, and also generate
-	  notifications when the bay lever is ejected or inserted.
-
-	  If you are not sure, say Y here.
-
 config THINKPAD_ACPI_VIDEO
 	bool "Video output control support"
 	depends on THINKPAD_ACPI
@@ -355,10 +331,11 @@ config EEEPC_LAPTOP
 	depends on INPUT
 	depends on EXPERIMENTAL
 	depends on RFKILL || RFKILL = n
+	depends on HOTPLUG_PCI
 	select BACKLIGHT_CLASS_DEVICE
 	select HWMON
-	select HOTPLUG
-	select HOTPLUG_PCI if PCI
+	select LEDS_CLASS
+	select NEW_LEDS
 	---help---
 	  This driver supports the Fn-Fx keys on Eee PC laptops.
 
@@ -389,6 +366,18 @@ config ACPI_WMI
 
 	  It is safe to enable this driver even if your DSDT doesn't define
 	  any ACPI-WMI devices.
+
+config MSI_WMI
+	tristate "MSI WMI extras"
+	depends on ACPI_WMI
+	depends on INPUT
+	depends on BACKLIGHT_CLASS_DEVICE
+	select INPUT_SPARSEKMAP
+	help
+	 Say Y here if you want to support WMI-based hotkeys on MSI laptops.
+
+	 To compile this driver as a module, choose M here: the module will
+	 be called msi-wmi.
 
 config ACPI_ASUS
 	tristate "ASUS/Medion Laptop Extras (DEPRECATED)"
@@ -422,6 +411,15 @@ config ACPI_ASUS
 	  NOTE: This driver is deprecated and will probably be removed soon,
 	  use asus-laptop instead.
 
+config TOPSTAR_LAPTOP
+	tristate "Topstar Laptop Extras"
+	depends on ACPI
+	depends on INPUT
+	---help---
+	  This driver adds support for hotkeys found on Topstar laptops.
+
+	  If you have a Topstar laptop, say Y or M here.
+
 config ACPI_TOSHIBA
 	tristate "Toshiba Laptop Extras"
 	depends on ACPI
@@ -451,4 +449,31 @@ config ACPI_TOSHIBA
 
 	  If you have a legacy free Toshiba laptop (such as the Libretto L1
 	  series), say Y.
+
+config TOSHIBA_BT_RFKILL
+	tristate "Toshiba Bluetooth RFKill switch support"
+	depends on ACPI
+	---help---
+	  This driver adds support for Bluetooth events for the RFKill
+	  switch on modern Toshiba laptops with full ACPI support and
+	  an RFKill switch.
+
+	  This driver handles RFKill events for the TOS6205 Bluetooth,
+	  and re-enables it when the switch is set back to the 'on'
+	  position.
+
+	  If you have a modern Toshiba laptop with a Bluetooth and an
+	  RFKill switch (such as the Portege R500), say Y.
+
+config ACPI_CMPC
+	tristate "CMPC Laptop Extras"
+	depends on X86 && ACPI
+	select INPUT
+	select BACKLIGHT_CLASS_DEVICE
+	default n
+	help
+	  Support for Intel Classmate PC ACPI devices, including some
+	  keys as input device, backlight device, tablet and accelerometer
+	  devices.
+
 endif # X86_PLATFORM_DEVICES

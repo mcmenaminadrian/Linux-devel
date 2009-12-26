@@ -208,8 +208,6 @@ ENTRY(_user_exception)
 	lwi	r1, r1, TS_THREAD_INFO		/* get the thread info */
 	/* calculate kernel stack pointer */
 	addik	r1, r1, THREAD_SIZE - PT_SIZE
-	swi	r11, r0, PER_CPU(R11_SAVE)	/* temporarily save r11 */
-	lwi	r11, r0, PER_CPU(KM)		/* load mode indicator */
 2:
 	swi	r11, r1, PT_MODE		/* store the mode */
 	lwi	r11, r0, PER_CPU(R11_SAVE)	/* reload r11 */
@@ -551,29 +549,21 @@ no_work_pending:
 	rtid	r14, 0
 	nop
 
-sys_vfork_wrapper:
-	brid	sys_vfork
+sys_vfork:
+	brid	microblaze_vfork
 	addk	r5, r1, r0
 
-sys_clone_wrapper:
-	brid	sys_clone
+sys_clone:
+	brid	microblaze_clone
 	addk	r7, r1, r0
 
-sys_execve_wrapper:
-	brid	sys_execve
+sys_execve:
+	brid	microblaze_execve
 	addk	r8, r1, r0
-
-sys_sigreturn_wrapper:
-	brid	sys_sigreturn
-	addk	r5, r1, r0
 
 sys_rt_sigreturn_wrapper:
 	brid	sys_rt_sigreturn
 	addk	r5, r1, r0
-
-sys_sigsuspend_wrapper:
-	brid	sys_rt_sigsuspend
-	addk	r6, r1, r0
 
 sys_rt_sigsuspend_wrapper:
 	brid	sys_rt_sigsuspend

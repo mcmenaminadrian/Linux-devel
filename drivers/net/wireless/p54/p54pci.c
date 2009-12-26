@@ -22,6 +22,7 @@
 #include <net/mac80211.h>
 
 #include "p54.h"
+#include "lmac.h"
 #include "p54pci.h"
 
 MODULE_AUTHOR("Michael Wu <flamingice@sourmilk.net>");
@@ -410,7 +411,7 @@ static int p54p_open(struct ieee80211_hw *dev)
 	int err;
 
 	init_completion(&priv->boot_comp);
-	err = request_irq(priv->pdev->irq, &p54p_interrupt,
+	err = request_irq(priv->pdev->irq, p54p_interrupt,
 			  IRQF_SHARED, "p54pci", dev);
 	if (err) {
 		dev_err(&priv->pdev->dev, "failed to register IRQ handler\n");
@@ -564,7 +565,6 @@ static int __devinit p54p_probe(struct pci_dev *pdev,
 
  err_free_common:
 	release_firmware(priv->firmware);
-	p54_free_common(dev);
 	pci_free_consistent(pdev, sizeof(*priv->ring_control),
 			    priv->ring_control, priv->ring_control_dma);
 
@@ -573,7 +573,7 @@ static int __devinit p54p_probe(struct pci_dev *pdev,
 
  err_free_dev:
 	pci_set_drvdata(pdev, NULL);
-	ieee80211_free_hw(dev);
+	p54_free_common(dev);
 
  err_free_reg:
 	pci_release_regions(pdev);
@@ -590,16 +590,15 @@ static void __devexit p54p_remove(struct pci_dev *pdev)
 	if (!dev)
 		return;
 
-	ieee80211_unregister_hw(dev);
+	p54_unregister_common(dev);
 	priv = dev->priv;
 	release_firmware(priv->firmware);
 	pci_free_consistent(pdev, sizeof(*priv->ring_control),
 			    priv->ring_control, priv->ring_control_dma);
-	p54_free_common(dev);
 	iounmap(priv->map);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
-	ieee80211_free_hw(dev);
+	p54_free_common(dev);
 }
 
 #ifdef CONFIG_PM

@@ -428,17 +428,18 @@ bmac_init_phy(struct net_device *dev)
 	printk(KERN_DEBUG "phy registers:");
 	for (addr = 0; addr < 32; ++addr) {
 		if ((addr & 7) == 0)
-			printk("\n" KERN_DEBUG);
-		printk(" %.4x", bmac_mif_read(dev, addr));
+			printk(KERN_DEBUG);
+		printk(KERN_CONT " %.4x", bmac_mif_read(dev, addr));
 	}
-	printk("\n");
+	printk(KERN_CONT "\n");
+
 	if (bp->is_bmac_plus) {
 		unsigned int capable, ctrl;
 
 		ctrl = bmac_mif_read(dev, 0);
 		capable = ((bmac_mif_read(dev, 1) & 0xf800) >> 6) | 1;
-		if (bmac_mif_read(dev, 4) != capable
-		    || (ctrl & 0x1000) == 0) {
+		if (bmac_mif_read(dev, 4) != capable ||
+		    (ctrl & 0x1000) == 0) {
 			bmac_mif_write(dev, 4, capable);
 			bmac_mif_write(dev, 0, 0x1200);
 		} else
@@ -1488,7 +1489,7 @@ bmac_output(struct sk_buff *skb, struct net_device *dev)
 	struct bmac_data *bp = netdev_priv(dev);
 	skb_queue_tail(bp->queue, skb);
 	bmac_start(dev);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 static void bmac_tx_timeout(unsigned long data)

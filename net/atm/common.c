@@ -92,7 +92,7 @@ static void vcc_sock_destruct(struct sock *sk)
 static void vcc_def_wakeup(struct sock *sk)
 {
 	read_lock(&sk->sk_callback_lock);
-	if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+	if (sk_has_sleeper(sk))
 		wake_up(sk->sk_sleep);
 	read_unlock(&sk->sk_callback_lock);
 }
@@ -110,7 +110,7 @@ static void vcc_write_space(struct sock *sk)
 	read_lock(&sk->sk_callback_lock);
 
 	if (vcc_writable(sk)) {
-		if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+		if (sk_has_sleeper(sk))
 			wake_up_interruptible(sk->sk_sleep);
 
 		sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
@@ -496,7 +496,7 @@ int vcc_recvmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 	error = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
 	if (error)
 		return error;
-	sock_recv_timestamp(msg, sk, skb);
+	sock_recv_ts_and_drops(msg, sk, skb);
 	pr_debug("RcvM %d -= %d\n", atomic_read(&sk->sk_rmem_alloc), skb->truesize);
 	atm_return(vcc, skb->truesize);
 	skb_free_datagram(sk, skb);
@@ -594,7 +594,7 @@ unsigned int vcc_poll(struct file *file, struct socket *sock, poll_table *wait)
 	struct atm_vcc *vcc;
 	unsigned int mask;
 
-	poll_wait(file, sk->sk_sleep, wait);
+	sock_poll_wait(file, sk->sk_sleep, wait);
 	mask = 0;
 
 	vcc = ATM_SD(sock);
@@ -679,7 +679,7 @@ static int check_qos(const struct atm_qos *qos)
 }
 
 int vcc_setsockopt(struct socket *sock, int level, int optname,
-		   char __user *optval, int optlen)
+		   char __user *optval, unsigned int optlen)
 {
 	struct atm_vcc *vcc;
 	unsigned long value;

@@ -31,8 +31,6 @@ struct serio {
 
 	bool manual_bind;
 	bool registered;	/* port has been fully registered with driver core */
-	bool suspended;		/* port is suspended */
-
 
 	struct serio_device_id id;
 
@@ -217,5 +215,6 @@ static inline void serio_unpin_driver(struct serio *serio)
 #define SERIO_INEXIO	0x37
 #define SERIO_TOUCHIT213	0x38
 #define SERIO_W8001	0x39
+#define SERIO_DYNAPRO	0x3a
 
 #endif

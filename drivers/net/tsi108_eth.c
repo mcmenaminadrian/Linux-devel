@@ -802,12 +802,10 @@ static int tsi108_refill_rx(struct net_device *dev, int budget)
 		int rx = data->rxhead;
 		struct sk_buff *skb;
 
-		data->rxskbs[rx] = skb = netdev_alloc_skb(dev,
-							  TSI108_RXBUF_SIZE + 2);
+		skb = netdev_alloc_skb_ip_align(dev, TSI108_RXBUF_SIZE);
+		data->rxskbs[rx] = skb;
 		if (!skb)
 			break;
-
-		skb_reserve(skb, 2); /* Align the data on a 4-byte boundary. */
 
 		data->rxring[rx].buf0 = dma_map_single(NULL, skb->data,
 							TSI108_RX_SKB_SIZE,
@@ -1132,7 +1130,9 @@ static int tsi108_get_mac(struct net_device *dev)
 	}
 
 	if (!is_valid_ether_addr(dev->dev_addr)) {
-		printk("KERN_ERR: word1: %08x, word2: %08x\n", word1, word2);
+		printk(KERN_ERR
+		       "%s: Invalid MAC address. word1: %08x, word2: %08x\n",
+		       dev->name, word1, word2);
 		return -EINVAL;
 	}
 
@@ -1201,8 +1201,8 @@ static void tsi108_set_rx_mode(struct net_device *dev)
 				__set_bit(hash, &data->mc_hash[0]);
 			} else {
 				printk(KERN_ERR
-				       "%s: got multicast address of length %d "
-				       "instead of 6.\n", dev->name,
+		"%s: got multicast address of length %d instead of 6.\n",
+				       dev->name,
 				       mc->dmi_addrlen);
 			}
 
@@ -1354,7 +1354,7 @@ static int tsi108_open(struct net_device *dev)
 	for (i = 0; i < TSI108_RXRING_LEN; i++) {
 		struct sk_buff *skb;
 
-		skb = netdev_alloc_skb(dev, TSI108_RXBUF_SIZE + NET_IP_ALIGN);
+		skb = netdev_alloc_skb_ip_align(dev, TSI108_RXBUF_SIZE);
 		if (!skb) {
 			/* Bah.  No memory for now, but maybe we'll get
 			 * some more later.
@@ -1368,8 +1368,6 @@ static int tsi108_open(struct net_device *dev)
 		}
 
 		data->rxskbs[i] = skb;
-		/* Align the payload on a 4-byte boundary */
-		skb_reserve(skb, 2);
 		data->rxskbs[i] = skb;
 		data->rxring[i].buf0 = virt_to_phys(data->rxskbs[i]->data);
 		data->rxring[i].misc = TSI108_RX_OWN | TSI108_RX_INT;

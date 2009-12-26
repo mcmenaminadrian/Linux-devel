@@ -39,14 +39,14 @@ static void intel_crt_dpms(struct drm_encoder *encoder, int mode)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 temp, reg;
 
-	if (IS_IGDNG(dev))
+	if (IS_IRONLAKE(dev))
 		reg = PCH_ADPA;
 	else
 		reg = ADPA;
 
 	temp = I915_READ(reg);
 	temp &= ~(ADPA_HSYNC_CNTL_DISABLE | ADPA_VSYNC_CNTL_DISABLE);
-	temp |= ADPA_DAC_ENABLE;
+	temp &= ~ADPA_DAC_ENABLE;
 
 	switch(mode) {
 	case DRM_MODE_DPMS_ON:
@@ -113,7 +113,7 @@ static void intel_crt_mode_set(struct drm_encoder *encoder,
 	else
 		dpll_md_reg = DPLL_B_MD;
 
-	if (IS_IGDNG(dev))
+	if (IS_IRONLAKE(dev))
 		adpa_reg = PCH_ADPA;
 	else
 		adpa_reg = ADPA;
@@ -122,7 +122,7 @@ static void intel_crt_mode_set(struct drm_encoder *encoder,
 	 * Disable separate mode multiplier used when cloning SDVO to CRT
 	 * XXX this needs to be adjusted when we really are cloning
 	 */
-	if (IS_I965G(dev) && !IS_IGDNG(dev)) {
+	if (IS_I965G(dev) && !IS_IRONLAKE(dev)) {
 		dpll_md = I915_READ(dpll_md_reg);
 		I915_WRITE(dpll_md_reg,
 			   dpll_md & ~DPLL_MD_UDI_MULTIPLIER_MASK);
@@ -136,25 +136,25 @@ static void intel_crt_mode_set(struct drm_encoder *encoder,
 
 	if (intel_crtc->pipe == 0) {
 		adpa |= ADPA_PIPE_A_SELECT;
-		if (!IS_IGDNG(dev))
+		if (!IS_IRONLAKE(dev))
 			I915_WRITE(BCLRPAT_A, 0);
 	} else {
 		adpa |= ADPA_PIPE_B_SELECT;
-		if (!IS_IGDNG(dev))
+		if (!IS_IRONLAKE(dev))
 			I915_WRITE(BCLRPAT_B, 0);
 	}
 
 	I915_WRITE(adpa_reg, adpa);
 }
 
-static bool intel_igdng_crt_detect_hotplug(struct drm_connector *connector)
+static bool intel_ironlake_crt_detect_hotplug(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	u32 adpa, temp;
+	u32 adpa;
 	bool ret;
 
-	temp = adpa = I915_READ(PCH_ADPA);
+	adpa = I915_READ(PCH_ADPA);
 
 	adpa &= ~ADPA_CRT_HOTPLUG_MASK;
 
@@ -166,22 +166,21 @@ static bool intel_igdng_crt_detect_hotplug(struct drm_connector *connector)
 			ADPA_CRT_HOTPLUG_ENABLE |
 			ADPA_CRT_HOTPLUG_FORCE_TRIGGER);
 
-	DRM_DEBUG("pch crt adpa 0x%x", adpa);
+	DRM_DEBUG_KMS("pch crt adpa 0x%x", adpa);
 	I915_WRITE(PCH_ADPA, adpa);
 
-	/* This might not be needed as not specified in spec...*/
-	udelay(1000);
+	while ((I915_READ(PCH_ADPA) & ADPA_CRT_HOTPLUG_FORCE_TRIGGER) != 0)
+		;
 
 	/* Check the status to see if both blue and green are on now */
 	adpa = I915_READ(PCH_ADPA);
-	if ((adpa & ADPA_CRT_HOTPLUG_MONITOR_MASK) ==
-			ADPA_CRT_HOTPLUG_MONITOR_COLOR)
+	adpa &= ADPA_CRT_HOTPLUG_MONITOR_MASK;
+	if ((adpa == ADPA_CRT_HOTPLUG_MONITOR_COLOR) ||
+		(adpa == ADPA_CRT_HOTPLUG_MONITOR_MONO))
 		ret = true;
 	else
 		ret = false;
 
-	/* restore origin register */
-	I915_WRITE(PCH_ADPA, temp);
 	return ret;
 }
 
@@ -200,8 +199,8 @@ static bool intel_crt_detect_hotplug(struct drm_connector *connector)
 	u32 hotplug_en;
 	int i, tries = 0;
 
-	if (IS_IGDNG(dev))
-		return intel_igdng_crt_detect_hotplug(connector);
+	if (IS_IRONLAKE(dev))
+		return intel_ironlake_crt_detect_hotplug(connector);
 
 	/*
 	 * On 4 series desktop, CRT detect sequence need to be done twice
@@ -235,8 +234,8 @@ static bool intel_crt_detect_hotplug(struct drm_connector *connector)
 		} while (time_after(timeout, jiffies));
 	}
 
-	if ((I915_READ(PORT_HOTPLUG_STAT) & CRT_HOTPLUG_MONITOR_MASK) ==
-	    CRT_HOTPLUG_MONITOR_COLOR)
+	if ((I915_READ(PORT_HOTPLUG_STAT) & CRT_HOTPLUG_MONITOR_MASK) !=
+	    CRT_HOTPLUG_MONITOR_NONE)
 		return true;
 
 	return false;
@@ -428,8 +427,34 @@ static void intel_crt_destroy(struct drm_connector *connector)
 
 static int intel_crt_get_modes(struct drm_connector *connector)
 {
+	int ret;
 	struct intel_output *intel_output = to_intel_output(connector);
-	return intel_ddc_get_modes(intel_output);
+	struct i2c_adapter *ddcbus;
+	struct drm_device *dev = connector->dev;
+
+
+	ret = intel_ddc_get_modes(intel_output);
+	if (ret || !IS_G4X(dev))
+		goto end;
+
+	ddcbus = intel_output->ddc_bus;
+	/* Try to probe digital port for output in DVI-I -> VGA mode. */
+	intel_output->ddc_bus =
+		intel_i2c_create(connector->dev, GPIOD, "CRTDDC_D");
+
+	if (!intel_output->ddc_bus) {
+		intel_output->ddc_bus = ddcbus;
+		dev_printk(KERN_ERR, &connector->dev->pdev->dev,
+			   "DDC bus registration failed for CRTDDC_D.\n");
+		goto end;
+	}
+	/* Try to get modes by GPIOD port */
+	ret = intel_ddc_get_modes(intel_output);
+	intel_i2c_destroy(ddcbus);
+
+end:
+	return ret;
+
 }
 
 static int intel_crt_set_property(struct drm_connector *connector,
@@ -478,6 +503,7 @@ void intel_crt_init(struct drm_device *dev)
 {
 	struct drm_connector *connector;
 	struct intel_output *intel_output;
+	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 i2c_reg;
 
 	intel_output = kzalloc(sizeof(struct intel_output), GFP_KERNEL);
@@ -495,10 +521,14 @@ void intel_crt_init(struct drm_device *dev)
 					  &intel_output->enc);
 
 	/* Set up the DDC bus. */
-	if (IS_IGDNG(dev))
+	if (IS_IRONLAKE(dev))
 		i2c_reg = PCH_GPIOA;
-	else
+	else {
 		i2c_reg = GPIOA;
+		/* Use VBT information for CRT DDC if available */
+		if (dev_priv->crt_ddc_bus != 0)
+			i2c_reg = dev_priv->crt_ddc_bus;
+	}
 	intel_output->ddc_bus = intel_i2c_create(dev, i2c_reg, "CRTDDC_A");
 	if (!intel_output->ddc_bus) {
 		dev_printk(KERN_ERR, &dev->pdev->dev, "DDC bus registration "
@@ -507,6 +537,10 @@ void intel_crt_init(struct drm_device *dev)
 	}
 
 	intel_output->type = INTEL_OUTPUT_ANALOG;
+	intel_output->clone_mask = (1 << INTEL_SDVO_NON_TV_CLONE_BIT) |
+				   (1 << INTEL_ANALOG_CLONE_BIT) |
+				   (1 << INTEL_SDVO_LVDS_CLONE_BIT);
+	intel_output->crtc_mask = (1 << 0) | (1 << 1);
 	connector->interlace_allowed = 0;
 	connector->doublescan_allowed = 0;
 

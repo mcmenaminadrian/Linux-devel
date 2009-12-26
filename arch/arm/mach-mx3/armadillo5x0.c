@@ -31,6 +31,11 @@
 #include <linux/smsc911x.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/mtd/physmap.h>
+#include <linux/io.h>
+#include <linux/input.h>
+#include <linux/gpio_keys.h>
+#include <linux/i2c.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -46,8 +51,10 @@
 #include <mach/mmc.h>
 #include <mach/ipu.h>
 #include <mach/mx3fb.h>
+#include <mach/mxc_nand.h>
 
 #include "devices.h"
+#include "crm_regs.h"
 
 static int armadillo5x0_pins[] = {
 	/* UART1 */
@@ -93,7 +100,97 @@ static int armadillo5x0_pins[] = {
 	MX31_PIN_FPSHIFT__FPSHIFT,
 	MX31_PIN_DRDY0__DRDY0,
 	IOMUX_MODE(MX31_PIN_LCS1, IOMUX_CONFIG_GPIO), /*ADV7125_PSAVE*/
+	/* I2C2 */
+	MX31_PIN_CSPI2_MOSI__SCL,
+	MX31_PIN_CSPI2_MISO__SDA,
+};
 
+/* RTC over I2C*/
+#define ARMADILLO5X0_RTC_GPIO	IOMUX_TO_GPIO(MX31_PIN_SRXD4)
+
+static struct i2c_board_info armadillo5x0_i2c_rtc = {
+	I2C_BOARD_INFO("s35390a", 0x30),
+};
+
+/* GPIO BUTTONS */
+static struct gpio_keys_button armadillo5x0_buttons[] = {
+	{
+		.code		= KEY_ENTER, /*28*/
+		.gpio		= IOMUX_TO_GPIO(MX31_PIN_SCLK0),
+		.active_low	= 1,
+		.desc		= "menu",
+		.wakeup		= 1,
+	}, {
+		.code		= KEY_BACK, /*158*/
+		.gpio		= IOMUX_TO_GPIO(MX31_PIN_SRST0),
+		.active_low	= 1,
+		.desc		= "back",
+		.wakeup		= 1,
+	}
+};
+
+static struct gpio_keys_platform_data armadillo5x0_button_data = {
+	.buttons	= armadillo5x0_buttons,
+	.nbuttons	= ARRAY_SIZE(armadillo5x0_buttons),
+};
+
+static struct platform_device armadillo5x0_button_device = {
+	.name		= "gpio-keys",
+	.id		= -1,
+	.num_resources	= 0,
+	.dev		= {
+		.platform_data	= &armadillo5x0_button_data,
+	}
+};
+
+/*
+ * NAND Flash
+ */
+static struct mxc_nand_platform_data armadillo5x0_nand_flash_pdata = {
+	.width		= 1,
+	.hw_ecc		= 1,
+};
+
+/*
+ * MTD NOR Flash
+ */
+static struct mtd_partition armadillo5x0_nor_flash_partitions[] = {
+	{
+		.name		= "nor.bootloader",
+		.offset		= 0x00000000,
+		.size		= 4*32*1024,
+	}, {
+		.name		= "nor.kernel",
+		.offset		= MTDPART_OFS_APPEND,
+		.size		= 16*128*1024,
+	}, {
+		.name		= "nor.userland",
+		.offset		= MTDPART_OFS_APPEND,
+		.size		= 110*128*1024,
+	}, {
+		.name		= "nor.config",
+		.offset		= MTDPART_OFS_APPEND,
+		.size		= 1*128*1024,
+	},
+};
+
+static struct physmap_flash_data armadillo5x0_nor_flash_pdata = {
+	.width		= 2,
+	.parts		= armadillo5x0_nor_flash_partitions,
+	.nr_parts	= ARRAY_SIZE(armadillo5x0_nor_flash_partitions),
+};
+
+static struct resource armadillo5x0_nor_flash_resource = {
+	.flags		= IORESOURCE_MEM,
+	.start		= CS0_BASE_ADDR,
+	.end		= CS0_BASE_ADDR + SZ_64M - 1,
+};
+
+static struct platform_device armadillo5x0_nor_flash = {
+	.name			= "physmap-flash",
+	.id			= -1,
+	.num_resources		= 1,
+	.resource		= &armadillo5x0_nor_flash_resource,
 };
 
 /*
@@ -225,7 +322,7 @@ static struct resource armadillo5x0_smc911x_resources[] = {
 };
 
 static struct smsc911x_platform_config smsc911x_info = {
-	.flags		= SMSC911X_USE_32BIT,
+	.flags		= SMSC911X_USE_16BIT,
 	.irq_polarity   = SMSC911X_IRQ_POLARITY_ACTIVE_LOW,
 	.irq_type       = SMSC911X_IRQ_TYPE_PUSH_PULL,
 };
@@ -247,6 +344,8 @@ static struct imxuart_platform_data uart_pdata = {
 
 static struct platform_device *devices[] __initdata = {
 	&armadillo5x0_smc911x_device,
+	&mxc_i2c_device1,
+	&armadillo5x0_button_device,
 };
 
 /*
@@ -272,6 +371,28 @@ static void __init armadillo5x0_init(void)
 	/* Register FB */
 	mxc_register_device(&mx3_ipu, &mx3_ipu_data);
 	mxc_register_device(&mx3_fb, &mx3fb_pdata);
+
+	/* Register NOR Flash */
+	mxc_register_device(&armadillo5x0_nor_flash,
+			    &armadillo5x0_nor_flash_pdata);
+
+	/* Register NAND Flash */
+	mxc_register_device(&mxc_nand_device, &armadillo5x0_nand_flash_pdata);
+
+	/* set NAND page size to 2k if not configured via boot mode pins */
+	__raw_writel(__raw_readl(MXC_CCM_RCSR) | (1 << 30), MXC_CCM_RCSR);
+
+	/* RTC */
+	/* Get RTC IRQ and register the chip */
+	if (gpio_request(ARMADILLO5X0_RTC_GPIO, "rtc") == 0) {
+		if (gpio_direction_input(ARMADILLO5X0_RTC_GPIO) == 0)
+			armadillo5x0_i2c_rtc.irq = gpio_to_irq(ARMADILLO5X0_RTC_GPIO);
+		else
+			gpio_free(ARMADILLO5X0_RTC_GPIO);
+	}
+	if (armadillo5x0_i2c_rtc.irq == 0)
+		pr_warning("armadillo5x0_init: failed to get RTC IRQ\n");
+	i2c_register_board_info(1, &armadillo5x0_i2c_rtc, 1);
 }
 
 static void __init armadillo5x0_timer_init(void)
@@ -289,7 +410,7 @@ MACHINE_START(ARMADILLO5X0, "Armadillo-500")
 	.io_pg_offst	= ((AIPS1_BASE_ADDR_VIRT) >> 18) & 0xfffc,
 	.boot_params	= PHYS_OFFSET + 0x00000100,
 	.map_io		= mx31_map_io,
-	.init_irq	= mxc_init_irq,
+	.init_irq	= mx31_init_irq,
 	.timer		= &armadillo5x0_timer,
 	.init_machine	= armadillo5x0_init,
 MACHINE_END

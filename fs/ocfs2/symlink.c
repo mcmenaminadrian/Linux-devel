@@ -38,7 +38,6 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/pagemap.h>
-#include <linux/utsname.h>
 #include <linux/namei.h>
 
 #define MLOG_MASK_PREFIX ML_NAMEI
@@ -164,6 +163,7 @@ const struct inode_operations ocfs2_symlink_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= ocfs2_listxattr,
 	.removexattr	= generic_removexattr,
+	.fiemap		= ocfs2_fiemap,
 };
 const struct inode_operations ocfs2_fast_symlink_inode_operations = {
 	.readlink	= ocfs2_readlink,
@@ -175,4 +175,5 @@ const struct inode_operations ocfs2_fast_symlink_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= ocfs2_listxattr,
 	.removexattr	= generic_removexattr,
+	.fiemap		= ocfs2_fiemap,
 };

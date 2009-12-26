@@ -40,15 +40,10 @@ struct cfq_io_context {
 	struct io_context *ioc;
 
 	unsigned long last_end_request;
-	sector_t last_request_pos;
 
 	unsigned long ttime_total;
 	unsigned long ttime_samples;
 	unsigned long ttime_mean;
-
-	unsigned int seek_samples;
-	u64 seek_total;
-	sector_t seek_mean;
 
 	struct list_head queue_list;
 	struct hlist_node cic_list;
@@ -73,6 +68,10 @@ struct io_context {
 	unsigned short ioprio;
 	unsigned short ioprio_changed;
 
+#ifdef CONFIG_BLK_CGROUP
+	unsigned short cgroup_changed;
+#endif
+
 	/*
 	 * For request batching
 	 */
@@ -92,21 +91,22 @@ static inline struct io_context *ioc_task_link(struct io_context *ioc)
 	 * a race).
 	 */
 	if (ioc && atomic_long_inc_not_zero(&ioc->refcount)) {
-		atomic_long_inc(&ioc->refcount);
+		atomic_inc(&ioc->nr_tasks);
 		return ioc;
 	}
 
 	return NULL;
 }
 
+struct task_struct;
 #ifdef CONFIG_BLOCK
 int put_io_context(struct io_context *ioc);
-void exit_io_context(void);
+void exit_io_context(struct task_struct *task);
 struct io_context *get_io_context(gfp_t gfp_flags, int node);
 struct io_context *alloc_io_context(gfp_t gfp_flags, int node);
 void copy_io_context(struct io_context **pdst, struct io_context **psrc);
 #else
-static inline void exit_io_context(void)
+static inline void exit_io_context(struct task_struct *task)
 {
 }
 

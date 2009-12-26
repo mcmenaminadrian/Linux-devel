@@ -23,13 +23,13 @@
 #include <linux/input.h>
 #include <linux/gpio_keys.h>
 #include <linux/workqueue.h>
-
-#include <asm/gpio.h>
+#include <linux/gpio.h>
 
 struct gpio_button_data {
 	struct gpio_keys_button *button;
 	struct input_dev *input;
-	struct delayed_work work;
+	struct timer_list timer;
+	struct work_struct work;
 };
 
 struct gpio_keys_drvdata {
@@ -37,10 +37,8 @@ struct gpio_keys_drvdata {
 	struct gpio_button_data data[0];
 };
 
-static void gpio_keys_report_event(struct work_struct *work)
+static void gpio_keys_report_event(struct gpio_button_data *bdata)
 {
-	struct gpio_button_data *bdata =
-		container_of(work, struct gpio_button_data, work.work);
 	struct gpio_keys_button *button = bdata->button;
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
@@ -50,25 +48,93 @@ static void gpio_keys_report_event(struct work_struct *work)
 	input_sync(input);
 }
 
+static void gpio_keys_work_func(struct work_struct *work)
+{
+	struct gpio_button_data *bdata =
+		container_of(work, struct gpio_button_data, work);
+
+	gpio_keys_report_event(bdata);
+}
+
+static void gpio_keys_timer(unsigned long _data)
+{
+	struct gpio_button_data *data = (struct gpio_button_data *)_data;
+
+	schedule_work(&data->work);
+}
+
 static irqreturn_t gpio_keys_isr(int irq, void *dev_id)
 {
 	struct gpio_button_data *bdata = dev_id;
 	struct gpio_keys_button *button = bdata->button;
-	unsigned long delay;
 
 	BUG_ON(irq != gpio_to_irq(button->gpio));
 
-	delay = button->debounce_interval ?
-			msecs_to_jiffies(button->debounce_interval) : 0;
-	schedule_delayed_work(&bdata->work, delay);
+	if (button->debounce_interval)
+		mod_timer(&bdata->timer,
+			jiffies + msecs_to_jiffies(button->debounce_interval));
+	else
+		schedule_work(&bdata->work);
 
 	return IRQ_HANDLED;
+}
+
+static int __devinit gpio_keys_setup_key(struct device *dev,
+					 struct gpio_button_data *bdata,
+					 struct gpio_keys_button *button)
+{
+	char *desc = button->desc ? button->desc : "gpio_keys";
+	int irq, error;
+
+	setup_timer(&bdata->timer, gpio_keys_timer, (unsigned long)bdata);
+	INIT_WORK(&bdata->work, gpio_keys_work_func);
+
+	error = gpio_request(button->gpio, desc);
+	if (error < 0) {
+		dev_err(dev, "failed to request GPIO %d, error %d\n",
+			button->gpio, error);
+		goto fail2;
+	}
+
+	error = gpio_direction_input(button->gpio);
+	if (error < 0) {
+		dev_err(dev, "failed to configure"
+			" direction for GPIO %d, error %d\n",
+			button->gpio, error);
+		goto fail3;
+	}
+
+	irq = gpio_to_irq(button->gpio);
+	if (irq < 0) {
+		error = irq;
+		dev_err(dev, "Unable to get irq number for GPIO %d, error %d\n",
+			button->gpio, error);
+		goto fail3;
+	}
+
+	error = request_irq(irq, gpio_keys_isr,
+			    IRQF_SHARED |
+			    IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+			    desc, bdata);
+	if (error) {
+		dev_err(dev, "Unable to claim irq %d; error %d\n",
+			irq, error);
+		goto fail3;
+	}
+
+	return 0;
+
+fail3:
+	gpio_free(button->gpio);
+fail2:
+	return error;
 }
 
 static int __devinit gpio_keys_probe(struct platform_device *pdev)
 {
 	struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	struct gpio_keys_drvdata *ddata;
+	struct device *dev = &pdev->dev;
 	struct input_dev *input;
 	int i, error;
 	int wakeup = 0;
@@ -78,6 +144,7 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 			GFP_KERNEL);
 	input = input_allocate_device();
 	if (!ddata || !input) {
+		dev_err(dev, "failed to allocate state\n");
 		error = -ENOMEM;
 		goto fail1;
 	}
@@ -102,49 +169,14 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	for (i = 0; i < pdata->nbuttons; i++) {
 		struct gpio_keys_button *button = &pdata->buttons[i];
 		struct gpio_button_data *bdata = &ddata->data[i];
-		int irq;
 		unsigned int type = button->type ?: EV_KEY;
 
 		bdata->input = input;
 		bdata->button = button;
-		INIT_DELAYED_WORK(&bdata->work, gpio_keys_report_event);
 
-		error = gpio_request(button->gpio, button->desc ?: "gpio_keys");
-		if (error < 0) {
-			pr_err("gpio-keys: failed to request GPIO %d,"
-				" error %d\n", button->gpio, error);
+		error = gpio_keys_setup_key(dev, bdata, button);
+		if (error)
 			goto fail2;
-		}
-
-		error = gpio_direction_input(button->gpio);
-		if (error < 0) {
-			pr_err("gpio-keys: failed to configure input"
-				" direction for GPIO %d, error %d\n",
-				button->gpio, error);
-			gpio_free(button->gpio);
-			goto fail2;
-		}
-
-		irq = gpio_to_irq(button->gpio);
-		if (irq < 0) {
-			error = irq;
-			pr_err("gpio-keys: Unable to get irq number"
-				" for GPIO %d, error %d\n",
-				button->gpio, error);
-			gpio_free(button->gpio);
-			goto fail2;
-		}
-
-		error = request_irq(irq, gpio_keys_isr,
-				    IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-				    button->desc ? button->desc : "gpio_keys",
-				    bdata);
-		if (error) {
-			pr_err("gpio-keys: Unable to claim irq %d; error %d\n",
-				irq, error);
-			gpio_free(button->gpio);
-			goto fail2;
-		}
 
 		if (button->wakeup)
 			wakeup = 1;
@@ -154,10 +186,15 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 
 	error = input_register_device(input);
 	if (error) {
-		pr_err("gpio-keys: Unable to register input device, "
+		dev_err(dev, "Unable to register input device, "
 			"error: %d\n", error);
 		goto fail2;
 	}
+
+	/* get current state of buttons */
+	for (i = 0; i < pdata->nbuttons; i++)
+		gpio_keys_report_event(&ddata->data[i]);
+	input_sync(input);
 
 	device_init_wakeup(&pdev->dev, wakeup);
 
@@ -166,7 +203,9 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
  fail2:
 	while (--i >= 0) {
 		free_irq(gpio_to_irq(pdata->buttons[i].gpio), &ddata->data[i]);
-		cancel_delayed_work_sync(&ddata->data[i].work);
+		if (pdata->buttons[i].debounce_interval)
+			del_timer_sync(&ddata->data[i].timer);
+		cancel_work_sync(&ddata->data[i].work);
 		gpio_free(pdata->buttons[i].gpio);
 	}
 
@@ -190,7 +229,9 @@ static int __devexit gpio_keys_remove(struct platform_device *pdev)
 	for (i = 0; i < pdata->nbuttons; i++) {
 		int irq = gpio_to_irq(pdata->buttons[i].gpio);
 		free_irq(irq, &ddata->data[i]);
-		cancel_delayed_work_sync(&ddata->data[i].work);
+		if (pdata->buttons[i].debounce_interval)
+			del_timer_sync(&ddata->data[i].timer);
+		cancel_work_sync(&ddata->data[i].work);
 		gpio_free(pdata->buttons[i].gpio);
 	}
 
@@ -201,8 +242,9 @@ static int __devexit gpio_keys_remove(struct platform_device *pdev)
 
 
 #ifdef CONFIG_PM
-static int gpio_keys_suspend(struct platform_device *pdev, pm_message_t state)
+static int gpio_keys_suspend(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	int i;
 
@@ -219,36 +261,43 @@ static int gpio_keys_suspend(struct platform_device *pdev, pm_message_t state)
 	return 0;
 }
 
-static int gpio_keys_resume(struct platform_device *pdev)
+static int gpio_keys_resume(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
+	struct gpio_keys_drvdata *ddata = platform_get_drvdata(pdev);
 	struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	int i;
 
-	if (device_may_wakeup(&pdev->dev)) {
-		for (i = 0; i < pdata->nbuttons; i++) {
-			struct gpio_keys_button *button = &pdata->buttons[i];
-			if (button->wakeup) {
-				int irq = gpio_to_irq(button->gpio);
-				disable_irq_wake(irq);
-			}
+	for (i = 0; i < pdata->nbuttons; i++) {
+
+		struct gpio_keys_button *button = &pdata->buttons[i];
+		if (button->wakeup && device_may_wakeup(&pdev->dev)) {
+			int irq = gpio_to_irq(button->gpio);
+			disable_irq_wake(irq);
 		}
+
+		gpio_keys_report_event(&ddata->data[i]);
 	}
+	input_sync(ddata->input);
 
 	return 0;
 }
-#else
-#define gpio_keys_suspend	NULL
-#define gpio_keys_resume	NULL
+
+static const struct dev_pm_ops gpio_keys_pm_ops = {
+	.suspend	= gpio_keys_suspend,
+	.resume		= gpio_keys_resume,
+};
 #endif
 
 static struct platform_driver gpio_keys_device_driver = {
 	.probe		= gpio_keys_probe,
 	.remove		= __devexit_p(gpio_keys_remove),
-	.suspend	= gpio_keys_suspend,
-	.resume		= gpio_keys_resume,
 	.driver		= {
 		.name	= "gpio-keys",
 		.owner	= THIS_MODULE,
+#ifdef CONFIG_PM
+		.pm	= &gpio_keys_pm_ops,
+#endif
 	}
 };
 

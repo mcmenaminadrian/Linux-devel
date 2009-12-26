@@ -97,6 +97,7 @@ ath5k_eeprom_init_header(struct ath5k_hw *ah)
 	struct ath5k_eeprom_info *ee = &ah->ah_capabilities.cap_eeprom;
 	int ret;
 	u16 val;
+	u32 cksum, offset;
 
 	/*
 	 * Read values from EEPROM and store them in the capability structure
@@ -111,7 +112,6 @@ ath5k_eeprom_init_header(struct ath5k_hw *ah)
 	if (ah->ah_ee_version < AR5K_EEPROM_VERSION_3_0)
 		return 0;
 
-#ifdef notyet
 	/*
 	 * Validate the checksum of the EEPROM date. There are some
 	 * devices with invalid EEPROMs.
@@ -124,7 +124,6 @@ ath5k_eeprom_init_header(struct ath5k_hw *ah)
 		ATH5K_ERR(ah->ah_sc, "Invalid EEPROM checksum 0x%04x\n", cksum);
 		return -EIO;
 	}
-#endif
 
 	AR5K_EEPROM_READ_HDR(AR5K_EEPROM_ANT_GAIN(ah->ah_ee_version),
 	    ee_ant_gain);
@@ -166,6 +165,16 @@ ath5k_eeprom_init_header(struct ath5k_hw *ah)
 	AR5K_EEPROM_READ(AR5K_EEPROM_RFKILL, val);
 	ee->ee_rfkill_pin = (u8) AR5K_REG_MS(val, AR5K_EEPROM_RFKILL_GPIO_SEL);
 	ee->ee_rfkill_pol = val & AR5K_EEPROM_RFKILL_POLARITY ? true : false;
+
+	/* Check if PCIE_OFFSET points to PCIE_SERDES_SECTION
+	 * and enable serdes programming if needed.
+	 *
+	 * XXX: Serdes values seem to be fixed so
+	 * no need to read them here, we write them
+	 * during ath5k_hw_attach */
+	AR5K_EEPROM_READ(AR5K_EEPROM_PCIE_OFFSET, val);
+	ee->ee_serdes = (val == AR5K_EEPROM_PCIE_SERDES_SECTION) ?
+							true : false;
 
 	return 0;
 }
@@ -404,27 +413,11 @@ static int ath5k_eeprom_read_modes(struct ath5k_hw *ah, u32 *offset,
 		break;
 	}
 
-done:
-	/* return new offset */
-	*offset = o;
-
-	return 0;
-}
-
-/*
- * Read turbo mode information on newer EEPROM versions
- */
-static int
-ath5k_eeprom_read_turbo_modes(struct ath5k_hw *ah,
-			      u32 *offset, unsigned int mode)
-{
-	struct ath5k_eeprom_info *ee = &ah->ah_capabilities.cap_eeprom;
-	u32 o = *offset;
-	u16 val;
-	int ret;
-
+	/*
+	 * Read turbo mode information on newer EEPROM versions
+	 */
 	if (ee->ee_version < AR5K_EEPROM_VERSION_5_0)
-		return 0;
+		goto done;
 
 	switch (mode){
 	case AR5K_EEPROM_MODE_11A:
@@ -458,6 +451,7 @@ ath5k_eeprom_read_turbo_modes(struct ath5k_hw *ah,
 		break;
 	}
 
+done:
 	/* return new offset */
 	*offset = o;
 
@@ -492,10 +486,6 @@ ath5k_eeprom_init_modes(struct ath5k_hw *ah)
 			return ret;
 
 		ret = ath5k_eeprom_read_modes(ah, &offset, mode);
-		if (ret)
-			return ret;
-
-		ret = ath5k_eeprom_read_turbo_modes(ah, &offset, mode);
 		if (ret)
 			return ret;
 	}
@@ -1501,7 +1491,7 @@ ath5k_eeprom_read_target_rate_pwr_info(struct ath5k_hw *ah, unsigned int mode)
  * This info is used to calibrate the baseband power table. Imagine
  * that for each channel there is a power curve that's hw specific
  * (depends on amplifier etc) and we try to "correct" this curve using
- * offests we pass on to phy chip (baseband -> before amplifier) so that
+ * offsets we pass on to phy chip (baseband -> before amplifier) so that
  * it can use accurate power values when setting tx power (takes amplifier's
  * performance on each channel into account).
  *

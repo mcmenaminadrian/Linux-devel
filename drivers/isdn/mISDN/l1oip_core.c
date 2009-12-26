@@ -661,7 +661,7 @@ l1oip_socket_thread(void *data)
 	size_t recvbuf_size = 1500;
 	int recvlen;
 	struct socket *socket = NULL;
-	DECLARE_COMPLETION(wait);
+	DECLARE_COMPLETION_ONSTACK(wait);
 
 	/* allocate buffer memory */
 	recvbuf = kmalloc(recvbuf_size, GFP_KERNEL);
@@ -731,10 +731,10 @@ l1oip_socket_thread(void *data)
 	while (!signal_pending(current)) {
 		struct kvec iov = {
 			.iov_base = recvbuf,
-			.iov_len = sizeof(recvbuf),
+			.iov_len = recvbuf_size,
 		};
 		recvlen = kernel_recvmsg(socket, &msg, &iov, 1,
-					 sizeof(recvbuf), 0);
+					 recvbuf_size, 0);
 		if (recvlen > 0) {
 			l1oip_socket_parse(hc, &sin_rx, recvbuf, recvlen);
 		} else {
@@ -1480,7 +1480,7 @@ l1oip_init(void)
 		return -ENOMEM;
 
 	l1oip_cnt = 0;
-	while (type[l1oip_cnt] && l1oip_cnt < MAX_CARDS) {
+	while (l1oip_cnt < MAX_CARDS && type[l1oip_cnt]) {
 		switch (type[l1oip_cnt] & 0xff) {
 		case 1:
 			pri = 0;

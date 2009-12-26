@@ -28,63 +28,8 @@
 #include "drmP.h"
 #include "radeon_drm.h"
 #include "radeon_reg.h"
-#include "radeon_microcode.h"
 #include "radeon.h"
 #include "atom.h"
-
-static inline uint32_t r100_irq_ack(struct radeon_device *rdev)
-{
-	uint32_t irqs = RREG32(RADEON_GEN_INT_STATUS);
-	uint32_t irq_mask = RADEON_SW_INT_TEST;
-
-	if (irqs) {
-		WREG32(RADEON_GEN_INT_STATUS, irqs);
-	}
-	return irqs & irq_mask;
-}
-
-int r100_irq_set(struct radeon_device *rdev)
-{
-	uint32_t tmp = 0;
-
-	if (rdev->irq.sw_int) {
-		tmp |= RADEON_SW_INT_ENABLE;
-	}
-	/* Todo go through CRTC and enable vblank int or not */
-	WREG32(RADEON_GEN_INT_CNTL, tmp);
-	return 0;
-}
-
-int r100_irq_process(struct radeon_device *rdev)
-{
-	uint32_t status;
-
-	status = r100_irq_ack(rdev);
-	if (!status) {
-		return IRQ_NONE;
-	}
-	while (status) {
-		/* SW interrupt */
-		if (status & RADEON_SW_INT_TEST) {
-			radeon_fence_process(rdev);
-		}
-		status = r100_irq_ack(rdev);
-	}
-	return IRQ_HANDLED;
-}
-
-int rs600_irq_set(struct radeon_device *rdev)
-{
-	uint32_t tmp = 0;
-
-	if (rdev->irq.sw_int) {
-		tmp |= RADEON_SW_INT_ENABLE;
-	}
-	WREG32(RADEON_GEN_INT_CNTL, tmp);
-	/* Todo go through CRTC and enable vblank int or not */
-	WREG32(R500_DxMODE_INT_MASK, 0);
-	return 0;
-}
 
 irqreturn_t radeon_driver_irq_handler_kms(DRM_IRQ_ARGS)
 {
@@ -94,10 +39,31 @@ irqreturn_t radeon_driver_irq_handler_kms(DRM_IRQ_ARGS)
 	return radeon_irq_process(rdev);
 }
 
+/*
+ * Handle hotplug events outside the interrupt handler proper.
+ */
+static void radeon_hotplug_work_func(struct work_struct *work)
+{
+	struct radeon_device *rdev = container_of(work, struct radeon_device,
+						  hotplug_work);
+	struct drm_device *dev = rdev->ddev;
+	struct drm_mode_config *mode_config = &dev->mode_config;
+	struct drm_connector *connector;
+
+	if (mode_config->num_connector) {
+		list_for_each_entry(connector, &mode_config->connector_list, head)
+			radeon_connector_hotplug(connector);
+	}
+	/* Just fire off a uevent and let userspace tell us what to do */
+	drm_sysfs_hotplug_event(dev);
+}
+
 void radeon_driver_irq_preinstall_kms(struct drm_device *dev)
 {
 	struct radeon_device *rdev = dev->dev_private;
 	unsigned i;
+
+	INIT_WORK(&rdev->hotplug_work, radeon_hotplug_work_func);
 
 	/* Disable *all* interrupts */
 	rdev->irq.sw_int = false;
@@ -138,10 +104,29 @@ void radeon_driver_irq_uninstall_kms(struct drm_device *dev)
 int radeon_irq_kms_init(struct radeon_device *rdev)
 {
 	int r = 0;
+	int num_crtc = 2;
 
-	r = drm_vblank_init(rdev->ddev, 2);
+	if (rdev->flags & RADEON_SINGLE_CRTC)
+		num_crtc = 1;
+	spin_lock_init(&rdev->irq.sw_lock);
+	r = drm_vblank_init(rdev->ddev, num_crtc);
 	if (r) {
 		return r;
+	}
+	/* enable msi */
+	rdev->msi_enabled = 0;
+	/* MSIs don't seem to work on my rs780;
+	 * not sure about rs880 or other rs780s.
+	 * Needs more investigation.
+	 */
+	if ((rdev->family >= CHIP_RV380) &&
+	    (rdev->family != CHIP_RS780) &&
+	    (rdev->family != CHIP_RS880)) {
+		int ret = pci_enable_msi(rdev->pdev);
+		if (!ret) {
+			rdev->msi_enabled = 1;
+			DRM_INFO("radeon: using MSI.\n");
+		}
 	}
 	drm_irq_install(rdev->ddev);
 	rdev->irq.installed = true;
@@ -154,5 +139,33 @@ void radeon_irq_kms_fini(struct radeon_device *rdev)
 	if (rdev->irq.installed) {
 		rdev->irq.installed = false;
 		drm_irq_uninstall(rdev->ddev);
+		if (rdev->msi_enabled)
+			pci_disable_msi(rdev->pdev);
 	}
 }
+
+void radeon_irq_kms_sw_irq_get(struct radeon_device *rdev)
+{
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&rdev->irq.sw_lock, irqflags);
+	if (rdev->ddev->irq_enabled && (++rdev->irq.sw_refcount == 1)) {
+		rdev->irq.sw_int = true;
+		radeon_irq_set(rdev);
+	}
+	spin_unlock_irqrestore(&rdev->irq.sw_lock, irqflags);
+}
+
+void radeon_irq_kms_sw_irq_put(struct radeon_device *rdev)
+{
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&rdev->irq.sw_lock, irqflags);
+	BUG_ON(rdev->ddev->irq_enabled && rdev->irq.sw_refcount <= 0);
+	if (rdev->ddev->irq_enabled && (--rdev->irq.sw_refcount == 0)) {
+		rdev->irq.sw_int = false;
+		radeon_irq_set(rdev);
+	}
+	spin_unlock_irqrestore(&rdev->irq.sw_lock, irqflags);
+}
+

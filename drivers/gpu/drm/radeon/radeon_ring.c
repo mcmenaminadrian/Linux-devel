@@ -56,10 +56,12 @@ int radeon_ib_get(struct radeon_device *rdev, struct radeon_ib **ib)
 		set_bit(i, rdev->ib_pool.alloc_bm);
 		rdev->ib_pool.ibs[i].length_dw = 0;
 		*ib = &rdev->ib_pool.ibs[i];
+		mutex_unlock(&rdev->ib_pool.mutex);
 		goto out;
 	}
 	if (list_empty(&rdev->ib_pool.scheduled_ibs)) {
 		/* we go do nothings here */
+		mutex_unlock(&rdev->ib_pool.mutex);
 		DRM_ERROR("all IB allocated none scheduled.\n");
 		r = -EINVAL;
 		goto out;
@@ -69,10 +71,13 @@ int radeon_ib_get(struct radeon_device *rdev, struct radeon_ib **ib)
 			 struct radeon_ib, list);
 	if (nib->fence == NULL) {
 		/* we go do nothings here */
+		mutex_unlock(&rdev->ib_pool.mutex);
 		DRM_ERROR("IB %lu scheduled without a fence.\n", nib->idx);
 		r = -EINVAL;
 		goto out;
 	}
+	mutex_unlock(&rdev->ib_pool.mutex);
+
 	r = radeon_fence_wait(nib->fence, false);
 	if (r) {
 		DRM_ERROR("radeon: IB(%lu:0x%016lX:%u)\n", nib->idx,
@@ -81,12 +86,17 @@ int radeon_ib_get(struct radeon_device *rdev, struct radeon_ib **ib)
 		goto out;
 	}
 	radeon_fence_unref(&nib->fence);
+
 	nib->length_dw = 0;
+
+	/* scheduled list is accessed here */
+	mutex_lock(&rdev->ib_pool.mutex);
 	list_del(&nib->list);
 	INIT_LIST_HEAD(&nib->list);
+	mutex_unlock(&rdev->ib_pool.mutex);
+
 	*ib = nib;
 out:
-	mutex_unlock(&rdev->ib_pool.mutex);
 	if (r) {
 		radeon_fence_unref(&fence);
 	} else {
@@ -111,60 +121,36 @@ void radeon_ib_free(struct radeon_device *rdev, struct radeon_ib **ib)
 	}
 	list_del(&tmp->list);
 	INIT_LIST_HEAD(&tmp->list);
-	if (tmp->fence) {
+	if (tmp->fence)
 		radeon_fence_unref(&tmp->fence);
-	}
+
 	tmp->length_dw = 0;
 	clear_bit(tmp->idx, rdev->ib_pool.alloc_bm);
 	mutex_unlock(&rdev->ib_pool.mutex);
-}
-
-static void radeon_ib_align(struct radeon_device *rdev, struct radeon_ib *ib)
-{
-	while ((ib->length_dw & rdev->cp.align_mask)) {
-		ib->ptr[ib->length_dw++] = PACKET2(0);
-	}
-}
-
-static void radeon_ib_cpu_flush(struct radeon_device *rdev,
-				struct radeon_ib *ib)
-{
-	unsigned long tmp;
-	unsigned i;
-
-	/* To force CPU cache flush ugly but seems reliable */
-	for (i = 0; i < ib->length_dw; i += (rdev->cp.align_mask + 1)) {
-		tmp = readl(&ib->ptr[i]);
-	}
 }
 
 int radeon_ib_schedule(struct radeon_device *rdev, struct radeon_ib *ib)
 {
 	int r = 0;
 
-	mutex_lock(&rdev->ib_pool.mutex);
-	radeon_ib_align(rdev, ib);
-	radeon_ib_cpu_flush(rdev, ib);
 	if (!ib->length_dw || !rdev->cp.ready) {
 		/* TODO: Nothings in the ib we should report. */
-		mutex_unlock(&rdev->ib_pool.mutex);
 		DRM_ERROR("radeon: couldn't schedule IB(%lu).\n", ib->idx);
 		return -EINVAL;
 	}
-	/* 64 dwords should be enought for fence too */
+
+	/* 64 dwords should be enough for fence too */
 	r = radeon_ring_lock(rdev, 64);
 	if (r) {
 		DRM_ERROR("radeon: scheduling IB failled (%d).\n", r);
-		mutex_unlock(&rdev->ib_pool.mutex);
 		return r;
 	}
-	radeon_ring_write(rdev, PACKET0(RADEON_CP_IB_BASE, 1));
-	radeon_ring_write(rdev, ib->gpu_addr);
-	radeon_ring_write(rdev, ib->length_dw);
+	radeon_ring_ib_execute(rdev, ib);
 	radeon_fence_emit(rdev, ib->fence);
-	radeon_ring_unlock_commit(rdev);
+	mutex_lock(&rdev->ib_pool.mutex);
 	list_add_tail(&ib->list, &rdev->ib_pool.scheduled_ibs);
 	mutex_unlock(&rdev->ib_pool.mutex);
+	radeon_ring_unlock_commit(rdev);
 	return 0;
 }
 
@@ -175,21 +161,28 @@ int radeon_ib_pool_init(struct radeon_device *rdev)
 	int i;
 	int r = 0;
 
+	if (rdev->ib_pool.robj)
+		return 0;
 	/* Allocate 1M object buffer */
 	INIT_LIST_HEAD(&rdev->ib_pool.scheduled_ibs);
-	r = radeon_object_create(rdev, NULL,  RADEON_IB_POOL_SIZE*64*1024,
-				 true, RADEON_GEM_DOMAIN_GTT,
-				 false, &rdev->ib_pool.robj);
+	r = radeon_bo_create(rdev, NULL,  RADEON_IB_POOL_SIZE*64*1024,
+				true, RADEON_GEM_DOMAIN_GTT,
+				&rdev->ib_pool.robj);
 	if (r) {
 		DRM_ERROR("radeon: failed to ib pool (%d).\n", r);
 		return r;
 	}
-	r = radeon_object_pin(rdev->ib_pool.robj, RADEON_GEM_DOMAIN_GTT, &gpu_addr);
+	r = radeon_bo_reserve(rdev->ib_pool.robj, false);
+	if (unlikely(r != 0))
+		return r;
+	r = radeon_bo_pin(rdev->ib_pool.robj, RADEON_GEM_DOMAIN_GTT, &gpu_addr);
 	if (r) {
+		radeon_bo_unreserve(rdev->ib_pool.robj);
 		DRM_ERROR("radeon: failed to pin ib pool (%d).\n", r);
 		return r;
 	}
-	r = radeon_object_kmap(rdev->ib_pool.robj, &ptr);
+	r = radeon_bo_kmap(rdev->ib_pool.robj, &ptr);
+	radeon_bo_unreserve(rdev->ib_pool.robj);
 	if (r) {
 		DRM_ERROR("radeon: failed to map ib poll (%d).\n", r);
 		return r;
@@ -215,73 +208,24 @@ int radeon_ib_pool_init(struct radeon_device *rdev)
 
 void radeon_ib_pool_fini(struct radeon_device *rdev)
 {
+	int r;
+
 	if (!rdev->ib_pool.ready) {
 		return;
 	}
 	mutex_lock(&rdev->ib_pool.mutex);
 	bitmap_zero(rdev->ib_pool.alloc_bm, RADEON_IB_POOL_SIZE);
 	if (rdev->ib_pool.robj) {
-		radeon_object_kunmap(rdev->ib_pool.robj);
-		radeon_object_unref(&rdev->ib_pool.robj);
+		r = radeon_bo_reserve(rdev->ib_pool.robj, false);
+		if (likely(r == 0)) {
+			radeon_bo_kunmap(rdev->ib_pool.robj);
+			radeon_bo_unpin(rdev->ib_pool.robj);
+			radeon_bo_unreserve(rdev->ib_pool.robj);
+		}
+		radeon_bo_unref(&rdev->ib_pool.robj);
 		rdev->ib_pool.robj = NULL;
 	}
 	mutex_unlock(&rdev->ib_pool.mutex);
-}
-
-int radeon_ib_test(struct radeon_device *rdev)
-{
-	struct radeon_ib *ib;
-	uint32_t scratch;
-	uint32_t tmp = 0;
-	unsigned i;
-	int r;
-
-	r = radeon_scratch_get(rdev, &scratch);
-	if (r) {
-		DRM_ERROR("radeon: failed to get scratch reg (%d).\n", r);
-		return r;
-	}
-	WREG32(scratch, 0xCAFEDEAD);
-	r = radeon_ib_get(rdev, &ib);
-	if (r) {
-		return r;
-	}
-	ib->ptr[0] = PACKET0(scratch, 0);
-	ib->ptr[1] = 0xDEADBEEF;
-	ib->ptr[2] = PACKET2(0);
-	ib->ptr[3] = PACKET2(0);
-	ib->ptr[4] = PACKET2(0);
-	ib->ptr[5] = PACKET2(0);
-	ib->ptr[6] = PACKET2(0);
-	ib->ptr[7] = PACKET2(0);
-	ib->length_dw = 8;
-	r = radeon_ib_schedule(rdev, ib);
-	if (r) {
-		radeon_scratch_free(rdev, scratch);
-		radeon_ib_free(rdev, &ib);
-		return r;
-	}
-	r = radeon_fence_wait(ib->fence, false);
-	if (r) {
-		return r;
-	}
-	for (i = 0; i < rdev->usec_timeout; i++) {
-		tmp = RREG32(scratch);
-		if (tmp == 0xDEADBEEF) {
-			break;
-		}
-		DRM_UDELAY(1);
-	}
-	if (i < rdev->usec_timeout) {
-		DRM_INFO("ib test succeeded in %u usecs\n", i);
-	} else {
-		DRM_ERROR("radeon: ib test failed (sracth(0x%04X)=0x%08X)\n",
-			  scratch, tmp);
-		r = -EINVAL;
-	}
-	radeon_scratch_free(rdev, scratch);
-	radeon_ib_free(rdev, &ib);
-	return r;
 }
 
 
@@ -290,7 +234,10 @@ int radeon_ib_test(struct radeon_device *rdev)
  */
 void radeon_ring_free_size(struct radeon_device *rdev)
 {
-	rdev->cp.rptr = RREG32(RADEON_CP_RB_RPTR);
+	if (rdev->family >= CHIP_R600)
+		rdev->cp.rptr = RREG32(R600_CP_RB_RPTR);
+	else
+		rdev->cp.rptr = RREG32(RADEON_CP_RB_RPTR);
 	/* This works because ring_size is a power of 2 */
 	rdev->cp.ring_free_dw = (rdev->cp.rptr + (rdev->cp.ring_size / 4));
 	rdev->cp.ring_free_dw -= rdev->cp.wptr;
@@ -333,11 +280,10 @@ void radeon_ring_unlock_commit(struct radeon_device *rdev)
 	count_dw_pad = (rdev->cp.align_mask + 1) -
 		       (rdev->cp.wptr & rdev->cp.align_mask);
 	for (i = 0; i < count_dw_pad; i++) {
-		radeon_ring_write(rdev, PACKET2(0));
+		radeon_ring_write(rdev, 2 << 30);
 	}
 	DRM_MEMORYBARRIER();
-	WREG32(RADEON_CP_RB_WPTR, rdev->cp.wptr);
-	(void)RREG32(RADEON_CP_RB_WPTR);
+	radeon_cp_commit(rdev);
 	mutex_unlock(&rdev->cp.mutex);
 }
 
@@ -347,46 +293,6 @@ void radeon_ring_unlock_undo(struct radeon_device *rdev)
 	mutex_unlock(&rdev->cp.mutex);
 }
 
-int radeon_ring_test(struct radeon_device *rdev)
-{
-	uint32_t scratch;
-	uint32_t tmp = 0;
-	unsigned i;
-	int r;
-
-	r = radeon_scratch_get(rdev, &scratch);
-	if (r) {
-		DRM_ERROR("radeon: cp failed to get scratch reg (%d).\n", r);
-		return r;
-	}
-	WREG32(scratch, 0xCAFEDEAD);
-	r = radeon_ring_lock(rdev, 2);
-	if (r) {
-		DRM_ERROR("radeon: cp failed to lock ring (%d).\n", r);
-		radeon_scratch_free(rdev, scratch);
-		return r;
-	}
-	radeon_ring_write(rdev, PACKET0(scratch, 0));
-	radeon_ring_write(rdev, 0xDEADBEEF);
-	radeon_ring_unlock_commit(rdev);
-	for (i = 0; i < rdev->usec_timeout; i++) {
-		tmp = RREG32(scratch);
-		if (tmp == 0xDEADBEEF) {
-			break;
-		}
-		DRM_UDELAY(1);
-	}
-	if (i < rdev->usec_timeout) {
-		DRM_INFO("ring test succeeded in %d usecs\n", i);
-	} else {
-		DRM_ERROR("radeon: ring test failed (sracth(0x%04X)=0x%08X)\n",
-			  scratch, tmp);
-		r = -EINVAL;
-	}
-	radeon_scratch_free(rdev, scratch);
-	return r;
-}
-
 int radeon_ring_init(struct radeon_device *rdev, unsigned ring_size)
 {
 	int r;
@@ -394,29 +300,28 @@ int radeon_ring_init(struct radeon_device *rdev, unsigned ring_size)
 	rdev->cp.ring_size = ring_size;
 	/* Allocate ring buffer */
 	if (rdev->cp.ring_obj == NULL) {
-		r = radeon_object_create(rdev, NULL, rdev->cp.ring_size,
-					 true,
-					 RADEON_GEM_DOMAIN_GTT,
-					 false,
-					 &rdev->cp.ring_obj);
+		r = radeon_bo_create(rdev, NULL, rdev->cp.ring_size, true,
+					RADEON_GEM_DOMAIN_GTT,
+					&rdev->cp.ring_obj);
 		if (r) {
-			DRM_ERROR("radeon: failed to create ring buffer (%d).\n", r);
-			mutex_unlock(&rdev->cp.mutex);
+			dev_err(rdev->dev, "(%d) ring create failed\n", r);
 			return r;
 		}
-		r = radeon_object_pin(rdev->cp.ring_obj,
-				      RADEON_GEM_DOMAIN_GTT,
-				      &rdev->cp.gpu_addr);
+		r = radeon_bo_reserve(rdev->cp.ring_obj, false);
+		if (unlikely(r != 0))
+			return r;
+		r = radeon_bo_pin(rdev->cp.ring_obj, RADEON_GEM_DOMAIN_GTT,
+					&rdev->cp.gpu_addr);
 		if (r) {
-			DRM_ERROR("radeon: failed to pin ring buffer (%d).\n", r);
-			mutex_unlock(&rdev->cp.mutex);
+			radeon_bo_unreserve(rdev->cp.ring_obj);
+			dev_err(rdev->dev, "(%d) ring pin failed\n", r);
 			return r;
 		}
-		r = radeon_object_kmap(rdev->cp.ring_obj,
+		r = radeon_bo_kmap(rdev->cp.ring_obj,
 				       (void **)&rdev->cp.ring);
+		radeon_bo_unreserve(rdev->cp.ring_obj);
 		if (r) {
-			DRM_ERROR("radeon: failed to map ring buffer (%d).\n", r);
-			mutex_unlock(&rdev->cp.mutex);
+			dev_err(rdev->dev, "(%d) ring map failed\n", r);
 			return r;
 		}
 	}
@@ -427,11 +332,17 @@ int radeon_ring_init(struct radeon_device *rdev, unsigned ring_size)
 
 void radeon_ring_fini(struct radeon_device *rdev)
 {
+	int r;
+
 	mutex_lock(&rdev->cp.mutex);
 	if (rdev->cp.ring_obj) {
-		radeon_object_kunmap(rdev->cp.ring_obj);
-		radeon_object_unpin(rdev->cp.ring_obj);
-		radeon_object_unref(&rdev->cp.ring_obj);
+		r = radeon_bo_reserve(rdev->cp.ring_obj, false);
+		if (likely(r == 0)) {
+			radeon_bo_kunmap(rdev->cp.ring_obj);
+			radeon_bo_unpin(rdev->cp.ring_obj);
+			radeon_bo_unreserve(rdev->cp.ring_obj);
+		}
+		radeon_bo_unref(&rdev->cp.ring_obj);
 		rdev->cp.ring = NULL;
 		rdev->cp.ring_obj = NULL;
 	}

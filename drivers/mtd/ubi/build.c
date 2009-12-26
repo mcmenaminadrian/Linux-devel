@@ -42,6 +42,7 @@
 #include <linux/log2.h>
 #include <linux/kthread.h>
 #include <linux/reboot.h>
+#include <linux/kernel.h>
 #include "ubi.h"
 
 /* Maximum length of the 'mtd=' parameter */
@@ -657,6 +658,11 @@ static int io_init(struct ubi_device *ubi)
 	if (ubi->mtd->block_isbad && ubi->mtd->block_markbad)
 		ubi->bad_allowed = 1;
 
+	if (ubi->mtd->type == MTD_NORFLASH) {
+		ubi_assert(ubi->mtd->writesize == 1);
+		ubi->nor_flash = 1;
+	}
+
 	ubi->min_io_size = ubi->mtd->writesize;
 	ubi->hdrs_min_io_size = ubi->mtd->writesize >> ubi->mtd->subpage_sft;
 
@@ -996,6 +1002,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num, int vid_hdr_offset)
 	ubi_msg("number of PEBs reserved for bad PEB handling: %d",
 		ubi->beb_rsvd_pebs);
 	ubi_msg("max/mean erase counter: %d/%d", ubi->max_ec, ubi->mean_ec);
+	ubi_msg("image sequence number: %d", ubi->image_seq);
 
 	/*
 	 * The below lock makes sure we do not race with 'ubi_thread()' which
@@ -1251,7 +1258,7 @@ static int __init bytes_str_to_int(const char *str)
 	unsigned long result;
 
 	result = simple_strtoul(str, &endp, 0);
-	if (str == endp || result < 0) {
+	if (str == endp || result >= INT_MAX) {
 		printk(KERN_ERR "UBI error: incorrect bytes count: \"%s\"\n",
 		       str);
 		return -EINVAL;

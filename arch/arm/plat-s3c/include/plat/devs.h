@@ -28,6 +28,9 @@ extern struct platform_device s3c64xx_device_iis0;
 extern struct platform_device s3c64xx_device_iis1;
 extern struct platform_device s3c64xx_device_iisv4;
 
+extern struct platform_device s3c64xx_device_pcm0;
+extern struct platform_device s3c64xx_device_pcm1;
+
 extern struct platform_device s3c_device_fb;
 extern struct platform_device s3c_device_usb;
 extern struct platform_device s3c_device_lcd;
@@ -37,6 +40,7 @@ extern struct platform_device s3c_device_i2c1;
 extern struct platform_device s3c_device_rtc;
 extern struct platform_device s3c_device_adc;
 extern struct platform_device s3c_device_sdi;
+extern struct platform_device s3c_device_iis;
 extern struct platform_device s3c_device_hwmon;
 extern struct platform_device s3c_device_hsmmc0;
 extern struct platform_device s3c_device_hsmmc1;
@@ -44,6 +48,8 @@ extern struct platform_device s3c_device_hsmmc2;
 
 extern struct platform_device s3c_device_spi0;
 extern struct platform_device s3c_device_spi1;
+
+extern struct platform_device s3c_device_hwmon;
 
 extern struct platform_device s3c_device_nand;
 
@@ -55,5 +61,6 @@ extern struct platform_device s3c_device_usb_hsotg;
 #ifdef CONFIG_CPU_S3C2440
 
 extern struct platform_device s3c_device_camif;
+extern struct platform_device s3c_device_ac97;
 
 #endif

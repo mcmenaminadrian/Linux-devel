@@ -33,6 +33,16 @@
 #define NILFS_CNO_MIN	((__u64)1)
 #define NILFS_CNO_MAX	(~(__u64)0)
 
+struct nilfs_dat_info {
+	struct nilfs_mdt_info mi;
+	struct nilfs_palloc_cache palloc_cache;
+};
+
+static inline struct nilfs_dat_info *NILFS_DAT_I(struct inode *dat)
+{
+	return (struct nilfs_dat_info *)NILFS_MDT(dat);
+}
+
 static int nilfs_dat_prepare_entry(struct inode *dat,
 				   struct nilfs_palloc_req *req, int create)
 {
@@ -109,12 +119,6 @@ void nilfs_dat_commit_free(struct inode *dat, struct nilfs_palloc_req *req)
 	nilfs_palloc_commit_free_entry(dat, req);
 }
 
-void nilfs_dat_abort_free(struct inode *dat, struct nilfs_palloc_req *req)
-{
-	nilfs_dat_abort_entry(dat, req);
-	nilfs_palloc_abort_free_entry(dat, req);
-}
-
 int nilfs_dat_prepare_start(struct inode *dat, struct nilfs_palloc_req *req)
 {
 	int ret;
@@ -134,24 +138,10 @@ void nilfs_dat_commit_start(struct inode *dat, struct nilfs_palloc_req *req,
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
 					     req->pr_entry_bh, kaddr);
 	entry->de_start = cpu_to_le64(nilfs_mdt_cno(dat));
-	if (entry->de_blocknr != cpu_to_le64(0) ||
-	    entry->de_end != cpu_to_le64(NILFS_CNO_MAX)) {
-		printk(KERN_CRIT
-		       "%s: vbn = %llu, start = %llu, end = %llu, pbn = %llu\n",
-		       __func__, (unsigned long long)req->pr_entry_nr,
-		       (unsigned long long)le64_to_cpu(entry->de_start),
-		       (unsigned long long)le64_to_cpu(entry->de_end),
-		       (unsigned long long)le64_to_cpu(entry->de_blocknr));
-	}
 	entry->de_blocknr = cpu_to_le64(blocknr);
 	kunmap_atomic(kaddr, KM_USER0);
 
 	nilfs_dat_commit_entry(dat, req);
-}
-
-void nilfs_dat_abort_start(struct inode *dat, struct nilfs_palloc_req *req)
-{
-	nilfs_dat_abort_entry(dat, req);
 }
 
 int nilfs_dat_prepare_end(struct inode *dat, struct nilfs_palloc_req *req)
@@ -229,6 +219,37 @@ void nilfs_dat_abort_end(struct inode *dat, struct nilfs_palloc_req *req)
 	if (start == nilfs_mdt_cno(dat) && blocknr == 0)
 		nilfs_palloc_abort_free_entry(dat, req);
 	nilfs_dat_abort_entry(dat, req);
+}
+
+int nilfs_dat_prepare_update(struct inode *dat,
+			     struct nilfs_palloc_req *oldreq,
+			     struct nilfs_palloc_req *newreq)
+{
+	int ret;
+
+	ret = nilfs_dat_prepare_end(dat, oldreq);
+	if (!ret) {
+		ret = nilfs_dat_prepare_alloc(dat, newreq);
+		if (ret < 0)
+			nilfs_dat_abort_end(dat, oldreq);
+	}
+	return ret;
+}
+
+void nilfs_dat_commit_update(struct inode *dat,
+			     struct nilfs_palloc_req *oldreq,
+			     struct nilfs_palloc_req *newreq, int dead)
+{
+	nilfs_dat_commit_end(dat, oldreq, dead);
+	nilfs_dat_commit_alloc(dat, newreq);
+}
+
+void nilfs_dat_abort_update(struct inode *dat,
+			    struct nilfs_palloc_req *oldreq,
+			    struct nilfs_palloc_req *newreq)
+{
+	nilfs_dat_abort_end(dat, oldreq);
+	nilfs_dat_abort_alloc(dat, newreq);
 }
 
 /**
@@ -413,4 +434,41 @@ ssize_t nilfs_dat_get_vinfo(struct inode *dat, void *buf, unsigned visz,
 	}
 
 	return nvi;
+}
+
+/**
+ * nilfs_dat_read - read dat inode
+ * @dat: dat inode
+ * @raw_inode: on-disk dat inode
+ */
+int nilfs_dat_read(struct inode *dat, struct nilfs_inode *raw_inode)
+{
+	return nilfs_read_inode_common(dat, raw_inode);
+}
+
+/**
+ * nilfs_dat_new - create dat file
+ * @nilfs: nilfs object
+ * @entry_size: size of a dat entry
+ */
+struct inode *nilfs_dat_new(struct the_nilfs *nilfs, size_t entry_size)
+{
+	static struct lock_class_key dat_lock_key;
+	struct inode *dat;
+	struct nilfs_dat_info *di;
+	int err;
+
+	dat = nilfs_mdt_new(nilfs, NULL, NILFS_DAT_INO, sizeof(*di));
+	if (dat) {
+		err = nilfs_palloc_init_blockgroup(dat, entry_size);
+		if (unlikely(err)) {
+			nilfs_mdt_destroy(dat);
+			return NULL;
+		}
+
+		di = NILFS_DAT_I(dat);
+		lockdep_set_class(&di->mi.mi_sem, &dat_lock_key);
+		nilfs_palloc_setup_cache(dat, &di->palloc_cache);
+	}
+	return dat;
 }

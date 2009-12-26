@@ -350,6 +350,7 @@
 #define AVIVO_D1CRTC_BLANK_CONTROL                              0x6084
 #define AVIVO_D1CRTC_INTERLACE_CONTROL                          0x6088
 #define AVIVO_D1CRTC_INTERLACE_STATUS                           0x608c
+#define AVIVO_D1CRTC_FRAME_COUNT                                0x60a4
 #define AVIVO_D1CRTC_STEREO_CONTROL                             0x60c4
 
 /* master controls */
@@ -383,9 +384,16 @@
 #       define AVIVO_D1GRPH_TILED                               (1 << 20)
 #       define AVIVO_D1GRPH_MACRO_ADDRESS_MODE                  (1 << 21)
 
+/* The R7xx *_HIGH surface regs are backwards; the D1 regs are in the D2
+ * block and vice versa.  This applies to GRPH, CUR, etc.
+ */
 #define AVIVO_D1GRPH_LUT_SEL                                    0x6108
 #define AVIVO_D1GRPH_PRIMARY_SURFACE_ADDRESS                    0x6110
+#define R700_D1GRPH_PRIMARY_SURFACE_ADDRESS_HIGH                0x6914
+#define R700_D2GRPH_PRIMARY_SURFACE_ADDRESS_HIGH                0x6114
 #define AVIVO_D1GRPH_SECONDARY_SURFACE_ADDRESS                  0x6118
+#define R700_D1GRPH_SECONDARY_SURFACE_ADDRESS_HIGH              0x691c
+#define R700_D2GRPH_SECONDARY_SURFACE_ADDRESS_HIGH              0x611c
 #define AVIVO_D1GRPH_PITCH                                      0x6120
 #define AVIVO_D1GRPH_SURFACE_OFFSET_X                           0x6124
 #define AVIVO_D1GRPH_SURFACE_OFFSET_Y                           0x6128
@@ -403,6 +411,8 @@
 #       define AVIVO_D1CURSOR_MODE_MASK         (3 << 8)
 #       define AVIVO_D1CURSOR_MODE_24BPP        2
 #define AVIVO_D1CUR_SURFACE_ADDRESS             0x6408
+#define R700_D1CUR_SURFACE_ADDRESS_HIGH         0x6c0c
+#define R700_D2CUR_SURFACE_ADDRESS_HIGH         0x640c
 #define AVIVO_D1CUR_SIZE                        0x6410
 #define AVIVO_D1CUR_POSITION                    0x6414
 #define AVIVO_D1CUR_HOT_SPOT                    0x6418
@@ -438,13 +448,17 @@
 #       define AVIVO_DC_LB_DISP1_END_ADR_SHIFT  4
 #       define AVIVO_DC_LB_DISP1_END_ADR_MASK   0x7ff
 
-#define R500_DxMODE_INT_MASK 0x6540
-#define R500_D1MODE_INT_MASK (1<<0)
-#define R500_D2MODE_INT_MASK (1<<8)
-
 #define AVIVO_D1MODE_DATA_FORMAT                0x6528
 #       define AVIVO_D1MODE_INTERLEAVE_EN       (1 << 0)
 #define AVIVO_D1MODE_DESKTOP_HEIGHT             0x652C
+#define AVIVO_D1MODE_VBLANK_STATUS              0x6534
+#       define AVIVO_VBLANK_ACK                 (1 << 4)
+#define AVIVO_D1MODE_VLINE_START_END            0x6538
+#define AVIVO_D1MODE_VLINE_STATUS               0x653c
+#       define AVIVO_D1MODE_VLINE_STAT          (1 << 12)
+#define AVIVO_DxMODE_INT_MASK                   0x6540
+#       define AVIVO_D1MODE_INT_MASK            (1 << 0)
+#       define AVIVO_D2MODE_INT_MASK            (1 << 8)
 #define AVIVO_D1MODE_VIEWPORT_START             0x6580
 #define AVIVO_D1MODE_VIEWPORT_SIZE              0x6584
 #define AVIVO_D1MODE_EXT_OVERSCAN_LEFT_RIGHT    0x6588
@@ -474,6 +488,7 @@
 #define AVIVO_D2CRTC_BLANK_CONTROL                              0x6884
 #define AVIVO_D2CRTC_INTERLACE_CONTROL                          0x6888
 #define AVIVO_D2CRTC_INTERLACE_STATUS                           0x688c
+#define AVIVO_D2CRTC_FRAME_COUNT                                0x68a4
 #define AVIVO_D2CRTC_STEREO_CONTROL                             0x68c4
 
 #define AVIVO_D2GRPH_ENABLE                                     0x6900
@@ -496,6 +511,9 @@
 #define AVIVO_D2CUR_SIZE                        0x6c10
 #define AVIVO_D2CUR_POSITION                    0x6c14
 
+#define AVIVO_D2MODE_VBLANK_STATUS              0x6d34
+#define AVIVO_D2MODE_VLINE_START_END            0x6d38
+#define AVIVO_D2MODE_VLINE_STATUS               0x6d3c
 #define AVIVO_D2MODE_VIEWPORT_START             0x6d80
 #define AVIVO_D2MODE_VIEWPORT_SIZE              0x6d84
 #define AVIVO_D2MODE_EXT_OVERSCAN_LEFT_RIGHT    0x6d88
@@ -698,6 +716,8 @@
 
 #define AVIVO_DVOA_BIT_DEPTH_CONTROL			0x7988
 
+#define AVIVO_DC_GPIO_HPD_A                 0x7e94
+
 #define AVIVO_GPIO_0                        0x7e30
 #define AVIVO_GPIO_1                        0x7e40
 #define AVIVO_GPIO_2                        0x7e50
@@ -745,5 +765,9 @@
 #define AVIVO_I2C_CNTL						0x7d50
 #	define AVIVO_I2C_EN							(1 << 0)
 #	define AVIVO_I2C_RESET						(1 << 8)
+
+#define AVIVO_DISP_INTERRUPT_STATUS                             0x7edc
+#       define AVIVO_D1_VBLANK_INTERRUPT                        (1 << 4)
+#       define AVIVO_D2_VBLANK_INTERRUPT                        (1 << 5)
 
 #endif

@@ -47,6 +47,7 @@
 #include <asm/udbg.h>
 #include <sysdev/fsl_soc.h>
 #include <sysdev/fsl_pci.h>
+#include <sysdev/simple_gpio.h>
 #include <asm/qe.h>
 #include <asm/qe_ic.h>
 #include <asm/mpic.h>
@@ -85,7 +86,7 @@ static int mpc8568_fixup_125_clock(struct phy_device *phydev)
 	scr = phy_read(phydev, MV88E1111_SCR);
 
 	if (scr < 0)
-		return err;
+		return scr;
 
 	err = phy_write(phydev, MV88E1111_SCR, scr | 0x0008);
 
@@ -233,6 +234,19 @@ static void __init mpc85xx_mds_setup_arch(void)
 			/* Turn UCC1 & UCC2 on */
 			setbits8(&bcsr_regs[8], BCSR_UCC1_GETH_EN);
 			setbits8(&bcsr_regs[9], BCSR_UCC2_GETH_EN);
+		} else if (machine_is(mpc8569_mds)) {
+#define BCSR7_UCC12_GETHnRST	(0x1 << 2)
+#define BCSR8_UEM_MARVELL_RST	(0x1 << 1)
+			/*
+			 * U-Boot mangles interrupt polarity for Marvell PHYs,
+			 * so reset built-in and UEM Marvell PHYs, this puts
+			 * the PHYs into their normal state.
+			 */
+			clrbits8(&bcsr_regs[7], BCSR7_UCC12_GETHnRST);
+			setbits8(&bcsr_regs[8], BCSR8_UEM_MARVELL_RST);
+
+			setbits8(&bcsr_regs[7], BCSR7_UCC12_GETHnRST);
+			clrbits8(&bcsr_regs[8], BCSR8_UEM_MARVELL_RST);
 		}
 		iounmap(bcsr_regs);
 	}
@@ -241,7 +255,8 @@ static void __init mpc85xx_mds_setup_arch(void)
 #ifdef CONFIG_SWIOTLB
 	if (lmb_end_of_DRAM() > max) {
 		ppc_swiotlb_enable = 1;
-		set_pci_dma_ops(&swiotlb_pci_dma_ops);
+		set_pci_dma_ops(&swiotlb_dma_ops);
+		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_swiotlb;
 	}
 #endif
 }
@@ -286,11 +301,15 @@ static struct of_device_id mpc85xx_ids[] = {
 	{ .compatible = "fsl,qe", },
 	{ .compatible = "gianfar", },
 	{ .compatible = "fsl,rapidio-delta", },
+	{ .compatible = "fsl,mpc8548-guts", },
 	{},
 };
 
 static int __init mpc85xx_publish_devices(void)
 {
+	if (machine_is(mpc8569_mds))
+		simple_gpiochip_init("fsl,mpc8569mds-bcsr-gpio");
+
 	/* Publish the QE devices */
 	of_platform_bus_probe(NULL, mpc85xx_ids, NULL);
 

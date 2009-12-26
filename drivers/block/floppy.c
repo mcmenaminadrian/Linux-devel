@@ -3327,7 +3327,10 @@ static inline int set_geometry(unsigned int cmd, struct floppy_struct *g,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 		mutex_lock(&open_lock);
-		LOCK_FDC(drive, 1);
+		if (lock_fdc(drive, 1)) {
+			mutex_unlock(&open_lock);
+			return -EINTR;
+		}
 		floppy_type[type] = *g;
 		floppy_type[type].name = "user format";
 		for (cnt = type << 2; cnt < (type << 2) + 4; cnt++)
@@ -3493,6 +3496,9 @@ static int fd_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd,
 	if (((cmd & 0x40) && !FD_IOCTL_ALLOWED) ||
 	    ((cmd & 0x80) && !capable(CAP_SYS_ADMIN)))
 		return -EPERM;
+
+	if (WARN_ON(size < 0 || size > sizeof(inparam)))
+		return -EINVAL;
 
 	/* copyin */
 	CLEARSTRUCT(&inparam);
@@ -3904,7 +3910,7 @@ static int floppy_revalidate(struct gendisk *disk)
 	return res;
 }
 
-static struct block_device_operations floppy_fops = {
+static const struct block_device_operations floppy_fops = {
 	.owner			= THIS_MODULE,
 	.open			= floppy_open,
 	.release		= floppy_release,
@@ -4148,7 +4154,7 @@ static void floppy_device_release(struct device *dev)
 {
 }
 
-static int floppy_resume(struct platform_device *dev)
+static int floppy_resume(struct device *dev)
 {
 	int fdc;
 
@@ -4159,10 +4165,15 @@ static int floppy_resume(struct platform_device *dev)
 	return 0;
 }
 
-static struct platform_driver floppy_driver = {
+static const struct dev_pm_ops floppy_pm_ops = {
 	.resume = floppy_resume,
+	.restore = floppy_resume,
+};
+
+static struct platform_driver floppy_driver = {
 	.driver = {
 		.name = "floppy",
+		.pm = &floppy_pm_ops,
 	},
 };
 

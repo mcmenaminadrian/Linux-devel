@@ -177,9 +177,6 @@ static struct ata_port_operations pcmcia_8bit_port_ops = {
 	.drain_fifo	= pcmcia_8bit_drain_fifo,
 };
 
-#define CS_CHECK(fn, ret) \
-do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto cs_failed; } while (0)
-
 
 struct pcmcia_config_check {
 	unsigned long ctl_base;
@@ -252,7 +249,7 @@ static int pcmcia_init_one(struct pcmcia_device *pdev)
 	struct ata_port *ap;
 	struct ata_pcmcia_info *info;
 	struct pcmcia_config_check *stk = NULL;
-	int last_ret = 0, last_fn = 0, is_kme = 0, ret = -ENOMEM, p;
+	int is_kme = 0, ret = -ENOMEM, p;
 	unsigned long io_base, ctl_base;
 	void __iomem *io_addr, *ctl_addr;
 	int n_ports = 1;
@@ -271,7 +268,6 @@ static int pcmcia_init_one(struct pcmcia_device *pdev)
 	pdev->io.Attributes2 = IO_DATA_PATH_WIDTH_8;
 	pdev->io.IOAddrLines = 3;
 	pdev->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-	pdev->irq.IRQInfo1 = IRQ_LEVEL_ID;
 	pdev->conf.Attributes = CONF_ENABLE_IRQ;
 	pdev->conf.IntType = INT_MEMORY_AND_IO;
 
@@ -296,8 +292,13 @@ static int pcmcia_init_one(struct pcmcia_device *pdev)
 	}
 	io_base = pdev->io.BasePort1;
 	ctl_base = stk->ctl_base;
-	CS_CHECK(RequestIRQ, pcmcia_request_irq(pdev, &pdev->irq));
-	CS_CHECK(RequestConfiguration, pcmcia_request_configuration(pdev, &pdev->conf));
+	ret = pcmcia_request_irq(pdev, &pdev->irq);
+	if (ret)
+		goto failed;
+
+	ret = pcmcia_request_configuration(pdev, &pdev->conf);
+	if (ret)
+		goto failed;
 
 	/* iomap */
 	ret = -ENOMEM;
@@ -351,8 +352,6 @@ static int pcmcia_init_one(struct pcmcia_device *pdev)
 	kfree(stk);
 	return 0;
 
-cs_failed:
-	cs_error(pdev, last_fn, last_ret);
 failed:
 	kfree(stk);
 	info->ndev = 0;
@@ -411,6 +410,7 @@ static struct pcmcia_device_id pcmcia_devices[] = {
 	PCMCIA_DEVICE_PROD_ID123("PCMCIA", "IDE CARD", "F1", 0x281f1c5d, 0x1907960c, 0xf7fde8b9),
 	PCMCIA_DEVICE_PROD_ID12("ARGOSY", "CD-ROM", 0x78f308dc, 0x66536591),
 	PCMCIA_DEVICE_PROD_ID12("ARGOSY", "PnPIDE", 0x78f308dc, 0x0c694728),
+	PCMCIA_DEVICE_PROD_ID12("CNF   ", "CD-ROM", 0x46d7db81, 0x66536591),
 	PCMCIA_DEVICE_PROD_ID12("CNF CD-M", "CD-ROM", 0x7d93b852, 0x66536591),
 	PCMCIA_DEVICE_PROD_ID12("Creative Technology Ltd.", "PCMCIA CD-ROM Interface Card", 0xff8c8a45, 0xfe8020c4),
 	PCMCIA_DEVICE_PROD_ID12("Digital Equipment Corporation.", "Digital Mobile Media CD-ROM", 0x17692a66, 0xef1dcbde),

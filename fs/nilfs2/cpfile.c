@@ -307,7 +307,7 @@ int nilfs_cpfile_delete_checkpoints(struct inode *cpfile,
 		ret = nilfs_cpfile_get_checkpoint_block(cpfile, cno, 0, &cp_bh);
 		if (ret < 0) {
 			if (ret != -ENOENT)
-				goto out_header;
+				break;
 			/* skip hole */
 			ret = 0;
 			continue;
@@ -340,7 +340,7 @@ int nilfs_cpfile_delete_checkpoints(struct inode *cpfile,
 					continue;
 				printk(KERN_ERR "%s: cannot delete block\n",
 				       __func__);
-				goto out_header;
+				break;
 			}
 		}
 
@@ -358,7 +358,6 @@ int nilfs_cpfile_delete_checkpoints(struct inode *cpfile,
 		kunmap_atomic(kaddr, KM_USER0);
 	}
 
- out_header:
 	brelse(header_bh);
 
  out_sem:
@@ -816,8 +815,10 @@ int nilfs_cpfile_is_snapshot(struct inode *cpfile, __u64 cno)
 	void *kaddr;
 	int ret;
 
-	if (cno == 0)
-		return -ENOENT; /* checkpoint number 0 is invalid */
+	/* CP number is invalid if it's zero or larger than the
+	largest	exist one.*/
+	if (cno == 0 || cno >= nilfs_mdt_cno(cpfile))
+		return -ENOENT;
 	down_read(&NILFS_MDT(cpfile)->mi_sem);
 
 	ret = nilfs_cpfile_get_checkpoint_block(cpfile, cno, 0, &bh);
@@ -825,7 +826,10 @@ int nilfs_cpfile_is_snapshot(struct inode *cpfile, __u64 cno)
 		goto out;
 	kaddr = kmap_atomic(bh->b_page, KM_USER0);
 	cp = nilfs_cpfile_block_get_checkpoint(cpfile, cno, bh, kaddr);
-	ret = nilfs_checkpoint_snapshot(cp);
+	if (nilfs_checkpoint_invalid(cp))
+		ret = -ENOENT;
+	else
+		ret = nilfs_checkpoint_snapshot(cp);
 	kunmap_atomic(kaddr, KM_USER0);
 	brelse(bh);
 
@@ -867,7 +871,6 @@ int nilfs_cpfile_change_cpmode(struct inode *cpfile, __u64 cno, int mode)
 		 * exclusive with a new mount job.  Though it doesn't cover
 		 * umount, it's enough for the purpose.
 		 */
-		mutex_lock(&nilfs->ns_mount_mutex);
 		if (nilfs_checkpoint_is_mounted(nilfs, cno, 1)) {
 			/* Current implementation does not have to protect
 			   plain read-only mounts since they are exclusive
@@ -876,7 +879,6 @@ int nilfs_cpfile_change_cpmode(struct inode *cpfile, __u64 cno, int mode)
 			ret = -EBUSY;
 		} else
 			ret = nilfs_cpfile_clear_snapshot(cpfile, cno);
-		mutex_unlock(&nilfs->ns_mount_mutex);
 		return ret;
 	case NILFS_SNAPSHOT:
 		return nilfs_cpfile_set_snapshot(cpfile, cno);
@@ -923,4 +925,30 @@ int nilfs_cpfile_get_stat(struct inode *cpfile, struct nilfs_cpstat *cpstat)
  out_sem:
 	up_read(&NILFS_MDT(cpfile)->mi_sem);
 	return ret;
+}
+
+/**
+ * nilfs_cpfile_read - read cpfile inode
+ * @cpfile: cpfile inode
+ * @raw_inode: on-disk cpfile inode
+ */
+int nilfs_cpfile_read(struct inode *cpfile, struct nilfs_inode *raw_inode)
+{
+	return nilfs_read_inode_common(cpfile, raw_inode);
+}
+
+/**
+ * nilfs_cpfile_new - create cpfile
+ * @nilfs: nilfs object
+ * @cpsize: size of a checkpoint entry
+ */
+struct inode *nilfs_cpfile_new(struct the_nilfs *nilfs, size_t cpsize)
+{
+	struct inode *cpfile;
+
+	cpfile = nilfs_mdt_new(nilfs, NULL, NILFS_CPFILE_INO, 0);
+	if (cpfile)
+		nilfs_mdt_set_entry_size(cpfile, cpsize,
+					 sizeof(struct nilfs_cpfile_header));
+	return cpfile;
 }

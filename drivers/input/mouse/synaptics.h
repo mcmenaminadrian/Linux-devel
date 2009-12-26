@@ -105,7 +105,8 @@ struct synaptics_data {
 	int scroll;
 };
 
-int synaptics_detect(struct psmouse *psmouse, int set_properties);
+void synaptics_module_init(void);
+int synaptics_detect(struct psmouse *psmouse, bool set_properties);
 int synaptics_init(struct psmouse *psmouse);
 void synaptics_reset(struct psmouse *psmouse);
 

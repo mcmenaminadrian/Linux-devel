@@ -368,7 +368,7 @@ error:
 	return r;
 }
 
-/* MAC address: if custom mac addresses are to to be used CR_MAC_ADDR_P1 and
+/* MAC address: if custom mac addresses are to be used CR_MAC_ADDR_P1 and
  *              CR_MAC_ADDR_P2 must be overwritten
  */
 int zd_write_mac_addr(struct zd_chip *chip, const u8 *mac_addr)
@@ -755,7 +755,7 @@ static int hw_reset_phy(struct zd_chip *chip)
 static int zd1211_hw_init_hmac(struct zd_chip *chip)
 {
 	static const struct zd_ioreq32 ioreqs[] = {
-		{ CR_ZD1211_RETRY_MAX,		0x2 },
+		{ CR_ZD1211_RETRY_MAX,		ZD1211_RETRY_COUNT },
 		{ CR_RX_THRESHOLD,		0x000c0640 },
 	};
 
@@ -767,7 +767,7 @@ static int zd1211_hw_init_hmac(struct zd_chip *chip)
 static int zd1211b_hw_init_hmac(struct zd_chip *chip)
 {
 	static const struct zd_ioreq32 ioreqs[] = {
-		{ CR_ZD1211B_RETRY_MAX,		0x02020202 },
+		{ CR_ZD1211B_RETRY_MAX,		ZD1211B_RETRY_COUNT },
 		{ CR_ZD1211B_CWIN_MAX_MIN_AC0,	0x007f003f },
 		{ CR_ZD1211B_CWIN_MAX_MIN_AC1,	0x007f003f },
 		{ CR_ZD1211B_CWIN_MAX_MIN_AC2,  0x003f001f },
@@ -1278,11 +1278,11 @@ int zd_chip_control_leds(struct zd_chip *chip, enum led_status status)
 	other_led = chip->link_led == LED1 ? LED2 : LED1;
 
 	switch (status) {
-	case LED_OFF:
+	case ZD_LED_OFF:
 		ioreqs[0].value = FW_LINK_OFF;
 		ioreqs[1].value = v[1] & ~(LED1|LED2);
 		break;
-	case LED_SCANNING:
+	case ZD_LED_SCANNING:
 		ioreqs[0].value = FW_LINK_OFF;
 		ioreqs[1].value = v[1] & ~other_led;
 		if (get_seconds() % 3 == 0) {
@@ -1291,7 +1291,7 @@ int zd_chip_control_leds(struct zd_chip *chip, enum led_status status)
 			ioreqs[1].value |= chip->link_led;
 		}
 		break;
-	case LED_ASSOCIATED:
+	case ZD_LED_ASSOCIATED:
 		ioreqs[0].value = FW_LINK_TX;
 		ioreqs[1].value = v[1] & ~other_led;
 		ioreqs[1].value |= chip->link_led;

@@ -34,8 +34,8 @@
 #include <net/tcp_states.h>
 #include <net/route.h>
 
-#include <net/ieee802154/af_ieee802154.h>
-#include <net/ieee802154/netdevice.h>
+#include <net/af_ieee802154.h>
+#include <net/ieee802154_netdev.h>
 
 #include "af802154.h"
 
@@ -136,7 +136,7 @@ static int ieee802154_dev_ioctl(struct sock *sk, struct ifreq __user *arg,
 		unsigned int cmd)
 {
 	struct ifreq ifr;
-	int ret = -EINVAL;
+	int ret = -ENOIOCTLCMD;
 	struct net_device *dev;
 
 	if (copy_from_user(&ifr, arg, sizeof(struct ifreq)))
@@ -146,8 +146,8 @@ static int ieee802154_dev_ioctl(struct sock *sk, struct ifreq __user *arg,
 
 	dev_load(sock_net(sk), ifr.ifr_name);
 	dev = dev_get_by_name(sock_net(sk), ifr.ifr_name);
-	if (dev->type == ARPHRD_IEEE802154 ||
-	    dev->type == ARPHRD_IEEE802154_PHY)
+
+	if (dev->type == ARPHRD_IEEE802154 && dev->netdev_ops->ndo_do_ioctl)
 		ret = dev->netdev_ops->ndo_do_ioctl(dev, &ifr, cmd);
 
 	if (!ret && copy_to_user(arg, &ifr, sizeof(struct ifreq)))
@@ -234,14 +234,14 @@ static const struct proto_ops ieee802154_dgram_ops = {
  * set the state.
  */
 static int ieee802154_create(struct net *net, struct socket *sock,
-		int protocol)
+			     int protocol, int kern)
 {
 	struct sock *sk;
 	int rc;
 	struct proto *proto;
 	const struct proto_ops *ops;
 
-	if (net != &init_net)
+	if (!net_eq(net, &init_net))
 		return -EAFNOSUPPORT;
 
 	switch (sock->type) {
@@ -285,7 +285,7 @@ out:
 	return rc;
 }
 
-static struct net_proto_family ieee802154_family_ops = {
+static const struct net_proto_family ieee802154_family_ops = {
 	.family		= PF_IEEE802154,
 	.create		= ieee802154_create,
 	.owner		= THIS_MODULE,

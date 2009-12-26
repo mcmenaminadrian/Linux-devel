@@ -271,6 +271,8 @@ config BLK_DEV_CRYPTOLOOP
 	  instead, which can be configured to be on-disk compatible with the
 	  cryptoloop device.
 
+source "drivers/block/drbd/Kconfig"
+
 config BLK_DEV_NBD
 	tristate "Network block device support"
 	depends on NET
@@ -295,6 +297,22 @@ config BLK_DEV_NBD
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called nbd.
+
+	  If unsure, say N.
+
+config BLK_DEV_OSD
+	tristate "OSD object-as-blkdev support"
+	depends on SCSI_OSD_ULD
+	---help---
+	  Saying Y or M here will allow the exporting of a single SCSI
+	  OSD (object-based storage) object as a Linux block device.
+
+	  For example, if you create a 2G object on an OSD device,
+	  you can then use this module to present that 2G object as
+	  a Linux block device.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called osdblk.
 
 	  If unsure, say N.
 

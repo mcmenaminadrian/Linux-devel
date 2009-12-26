@@ -180,7 +180,6 @@ static ssize_t firmware_loading_store(struct device *dev,
 				goto err;
 			}
 			/* Pages will be freed by vfree() */
-			fw_priv->pages = NULL;
 			fw_priv->page_array_size = 0;
 			fw_priv->nr_pages = 0;
 			complete(&fw_priv->completion);
@@ -217,8 +216,10 @@ firmware_data_read(struct kobject *kobj, struct bin_attribute *bin_attr,
 		ret_count = -ENODEV;
 		goto out;
 	}
-	if (offset > fw->size)
-		return 0;
+	if (offset > fw->size) {
+		ret_count = 0;
+		goto out;
+	}
 	if (count > fw->size - offset)
 		count = fw->size - offset;
 
@@ -357,7 +358,7 @@ static void fw_dev_release(struct device *dev)
 	kfree(fw_priv->pages);
 	kfree(fw_priv->fw_id);
 	kfree(fw_priv);
-	put_device(dev);
+	kfree(dev);
 
 	module_put(THIS_MODULE);
 }
@@ -408,13 +409,11 @@ static int fw_register_device(struct device **dev_p, const char *fw_name,
 	if (retval) {
 		dev_err(device, "%s: device_register failed\n", __func__);
 		put_device(f_dev);
-		goto error_kfree_fw_id;
+		return retval;
 	}
 	*dev_p = f_dev;
 	return 0;
 
-error_kfree_fw_id:
-	kfree(fw_priv->fw_id);
 error_kfree:
 	kfree(f_dev);
 	kfree(fw_priv);
@@ -602,12 +601,9 @@ request_firmware_work_func(void *arg)
 	}
 	ret = _request_firmware(&fw, fw_work->name, fw_work->device,
 		fw_work->uevent);
-	if (ret < 0)
-		fw_work->cont(NULL, fw_work->context);
-	else {
-		fw_work->cont(fw, fw_work->context);
-		release_firmware(fw);
-	}
+
+	fw_work->cont(fw, fw_work->context);
+
 	module_put(fw_work->module);
 	kfree(fw_work);
 	return ret;
@@ -620,6 +616,7 @@ request_firmware_work_func(void *arg)
  *	is non-zero else the firmware copy must be done manually.
  * @name: name of firmware file
  * @device: device for which firmware is being loaded
+ * @gfp: allocation flags
  * @context: will be passed over to @cont, and
  *	@fw may be %NULL if firmware request fails.
  * @cont: function will be called asynchronously when the firmware
@@ -632,12 +629,12 @@ request_firmware_work_func(void *arg)
 int
 request_firmware_nowait(
 	struct module *module, int uevent,
-	const char *name, struct device *device, void *context,
+	const char *name, struct device *device, gfp_t gfp, void *context,
 	void (*cont)(const struct firmware *fw, void *context))
 {
 	struct task_struct *task;
 	struct firmware_work *fw_work = kmalloc(sizeof (struct firmware_work),
-						GFP_ATOMIC);
+						gfp);
 
 	if (!fw_work)
 		return -ENOMEM;

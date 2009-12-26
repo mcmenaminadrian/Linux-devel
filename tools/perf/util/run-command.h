@@ -1,5 +1,5 @@
-#ifndef RUN_COMMAND_H
-#define RUN_COMMAND_H
+#ifndef __PERF_RUN_COMMAND_H
+#define __PERF_RUN_COMMAND_H
 
 enum {
 	ERR_RUN_COMMAND_FORK = 10000,
@@ -79,15 +79,10 @@ struct async {
 	int (*proc)(int fd, void *data);
 	void *data;
 	int out;	/* caller reads from here and closes it */
-#ifndef __MINGW32__
 	pid_t pid;
-#else
-	HANDLE tid;
-	int fd_for_proc;
-#endif
 };
 
 int start_async(struct async *async);
 int finish_async(struct async *async);
 
-#endif
+#endif /* __PERF_RUN_COMMAND_H */

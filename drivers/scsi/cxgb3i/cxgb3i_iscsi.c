@@ -13,6 +13,7 @@
 
 #include <linux/inet.h>
 #include <linux/crypto.h>
+#include <linux/if_vlan.h>
 #include <net/dst.h>
 #include <net/tcp.h>
 #include <scsi/scsi_cmnd.h>
@@ -183,6 +184,9 @@ static struct cxgb3i_hba *cxgb3i_hba_find_by_netdev(struct net_device *ndev)
 {
 	struct cxgb3i_adapter *snic;
 	int i;
+
+	if (ndev->priv_flags & IFF_802_1Q_VLAN)
+		ndev = vlan_dev_real_dev(ndev);
 
 	read_lock(&cxgb3i_snic_rwlock);
 	list_for_each_entry(snic, &cxgb3i_snic_list, list_head) {
@@ -418,7 +422,7 @@ cxgb3i_session_create(struct iscsi_endpoint *ep, u16 cmds_max, u16 qdepth,
 	BUG_ON(hba != iscsi_host_priv(shost));
 
 	cls_session = iscsi_session_setup(&cxgb3i_iscsi_transport, shost,
-					  cmds_max,
+					  cmds_max, 0,
 					  sizeof(struct iscsi_tcp_task) +
 					  sizeof(struct cxgb3i_task_data),
 					  initial_cmdsn, ISCSI_MAX_TARGET);
@@ -933,7 +937,7 @@ static struct iscsi_transport cxgb3i_iscsi_transport = {
 				ISCSI_USERNAME | ISCSI_PASSWORD |
 				ISCSI_USERNAME_IN | ISCSI_PASSWORD_IN |
 				ISCSI_FAST_ABORT | ISCSI_ABORT_TMO |
-				ISCSI_LU_RESET_TMO |
+				ISCSI_LU_RESET_TMO | ISCSI_TGT_RESET_TMO |
 				ISCSI_PING_TMO | ISCSI_RECV_TMO |
 				ISCSI_IFACE_NAME | ISCSI_INITIATOR_NAME,
 	.host_param_mask	= ISCSI_HOST_HWADDRESS | ISCSI_HOST_IPADDRESS |

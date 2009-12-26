@@ -254,12 +254,12 @@ int phy_ethtool_sset(struct phy_device *phydev, struct ethtool_cmd *cmd)
 	if (cmd->autoneg == AUTONEG_ENABLE && cmd->advertising == 0)
 		return -EINVAL;
 
-	if (cmd->autoneg == AUTONEG_DISABLE
-			&& ((cmd->speed != SPEED_1000
-					&& cmd->speed != SPEED_100
-					&& cmd->speed != SPEED_10)
-				|| (cmd->duplex != DUPLEX_HALF
-					&& cmd->duplex != DUPLEX_FULL)))
+	if (cmd->autoneg == AUTONEG_DISABLE &&
+	    ((cmd->speed != SPEED_1000 &&
+	      cmd->speed != SPEED_100 &&
+	      cmd->speed != SPEED_10) ||
+	     (cmd->duplex != DUPLEX_HALF &&
+	      cmd->duplex != DUPLEX_FULL)))
 		return -EINVAL;
 
 	phydev->autoneg = cmd->autoneg;
@@ -324,9 +324,6 @@ int phy_mii_ioctl(struct phy_device *phydev,
 		break;
 
 	case SIOCSMIIREG:
-		if (!capable(CAP_NET_ADMIN))
-			return -EPERM;
-
 		if (mii_data->phy_id == phydev->addr) {
 			switch(mii_data->reg_num) {
 			case MII_BMCR:
@@ -356,9 +353,9 @@ int phy_mii_ioctl(struct phy_device *phydev,
 
 		phy_write(phydev, mii_data->reg_num, val);
 		
-		if (mii_data->reg_num == MII_BMCR 
-				&& val & BMCR_RESET
-				&& phydev->drv->config_init) {
+		if (mii_data->reg_num == MII_BMCR &&
+		    val & BMCR_RESET &&
+		    phydev->drv->config_init) {
 			phy_scan_fixups(phydev);
 			phydev->drv->config_init(phydev);
 		}
@@ -928,13 +925,32 @@ static void phy_state_machine(struct work_struct *work)
 				 * Otherwise, it's 0, and we're
 				 * still waiting for AN */
 				if (err > 0) {
-					phydev->state = PHY_RUNNING;
+					err = phy_read_status(phydev);
+					if (err)
+						break;
+
+					if (phydev->link) {
+						phydev->state = PHY_RUNNING;
+						netif_carrier_on(phydev->attached_dev);
+					} else
+						phydev->state = PHY_NOLINK;
+					phydev->adjust_link(phydev->attached_dev);
 				} else {
 					phydev->state = PHY_AN;
 					phydev->link_timeout = PHY_AN_TIMEOUT;
 				}
-			} else
-				phydev->state = PHY_RUNNING;
+			} else {
+				err = phy_read_status(phydev);
+				if (err)
+					break;
+
+				if (phydev->link) {
+					phydev->state = PHY_RUNNING;
+					netif_carrier_on(phydev->attached_dev);
+				} else
+					phydev->state = PHY_NOLINK;
+				phydev->adjust_link(phydev->attached_dev);
+			}
 			break;
 	}
 

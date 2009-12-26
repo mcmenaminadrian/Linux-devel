@@ -1,6 +1,6 @@
 /* linux/arch/arm/plat-s3c24xx/clock-dclk.c
  *
- * Copyright (c) 2004,2008 Simtec Electronics
+ * Copyright (c) 2004-2008 Simtec Electronics
  *	Ben Dooks <ben@simtec.co.uk>
  *	http://armlinux.simtec.co.uk/
  *
@@ -129,7 +129,7 @@ static int s3c24xx_clkout_setparent(struct clk *clk, struct clk *parent)
 
 	/* calculate the MISCCR setting for the clock */
 
-	if (parent == &clk_xtal)
+	if (parent == &clk_mpll)
 		source = S3C2410_MISCCR_CLK0_MPLL;
 	else if (parent == &clk_upll)
 		source = S3C2410_MISCCR_CLK0_UPLL;

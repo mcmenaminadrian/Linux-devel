@@ -62,9 +62,9 @@ module_param (debug, int, 0);
 MODULE_PARM_DESC (debug, "de2104x bitmapped message enable number");
 
 /* Set the copy breakpoint for the copy-only-tiny-buffer Rx structure. */
-#if defined(__alpha__) || defined(__arm__) || defined(__hppa__) \
-        || defined(CONFIG_SPARC) || defined(__ia64__) \
-        || defined(__sh__) || defined(__mips__)
+#if defined(__alpha__) || defined(__arm__) || defined(__hppa__) || \
+        defined(CONFIG_SPARC) || defined(__ia64__) ||		   \
+        defined(__sh__) || defined(__mips__)
 static int rx_copybreak = 1518;
 #else
 static int rx_copybreak = 100;
@@ -599,7 +599,8 @@ next:
 		netif_wake_queue(de->dev);
 }
 
-static int de_start_xmit (struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t de_start_xmit (struct sk_buff *skb,
+					struct net_device *dev)
 {
 	struct de_private *de = netdev_priv(dev);
 	unsigned int entry, tx_free;
@@ -651,7 +652,7 @@ static int de_start_xmit (struct sk_buff *skb, struct net_device *dev)
 	dw32(TxPoll, NormalTxPoll);
 	dev->trans_start = jiffies;
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /* Set or clear the multicast filter for this adaptor.
@@ -944,9 +945,10 @@ static void de_set_media (struct de_private *de)
 		macmode &= ~FullDuplex;
 
 	if (netif_msg_link(de)) {
-		printk(KERN_INFO "%s: set link %s\n"
-		       KERN_INFO "%s:    mode 0x%x, sia 0x%x,0x%x,0x%x,0x%x\n"
-		       KERN_INFO "%s:    set mode 0x%x, set sia 0x%x,0x%x,0x%x\n",
+		printk(KERN_INFO
+		       "%s: set link %s\n"
+		       "%s:    mode 0x%x, sia 0x%x,0x%x,0x%x,0x%x\n"
+		       "%s:    set mode 0x%x, set sia 0x%x,0x%x,0x%x\n",
 		       de->dev->name, media_name[media],
 		       de->dev->name, dr32(MacMode), dr32(SIAStatus),
 		       dr32(CSR13), dr32(CSR14), dr32(CSR15),

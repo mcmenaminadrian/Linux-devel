@@ -446,8 +446,8 @@ static int setup_regulators(struct lp3971 *lp3971,
 		lp3971->rdev[i] = regulator_register(&regulators[id],
 			lp3971->dev, pdata->regulators[i].initdata, lp3971);
 
-		err = IS_ERR(lp3971->rdev[i]);
-		if (err) {
+		if (IS_ERR(lp3971->rdev[i])) {
+			err = PTR_ERR(lp3971->rdev[i]);
 			dev_err(lp3971->dev, "regulator init failed: %d\n",
 				err);
 			goto error;
@@ -541,7 +541,7 @@ static struct i2c_driver lp3971_i2c_driver = {
 
 static int __init lp3971_module_init(void)
 {
-	int ret = -ENODEV;
+	int ret;
 
 	ret = i2c_add_driver(&lp3971_i2c_driver);
 	if (ret != 0)
