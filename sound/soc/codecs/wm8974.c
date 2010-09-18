@@ -18,6 +18,7 @@
 #include <linux/pm.h>
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -170,13 +171,17 @@ SOC_ENUM("Aux Mode", wm8974_auxmode),
 
 SOC_SINGLE("Capture Boost(+20dB)", WM8974_ADCBOOST,  8, 1, 0),
 SOC_SINGLE("Mono Playback Switch", WM8974_MONOMIX, 6, 1, 1),
+
+/* DAC / ADC oversampling */
+SOC_SINGLE("DAC 128x Oversampling Switch", WM8974_DAC, 8, 1, 0),
+SOC_SINGLE("ADC 128x Oversampling Switch", WM8974_ADC, 8, 1, 0),
 };
 
 /* Speaker Output Mixer */
 static const struct snd_kcontrol_new wm8974_speaker_mixer_controls[] = {
 SOC_DAPM_SINGLE("Line Bypass Switch", WM8974_SPKMIX, 1, 1, 0),
 SOC_DAPM_SINGLE("Aux Playback Switch", WM8974_SPKMIX, 5, 1, 0),
-SOC_DAPM_SINGLE("PCM Playback Switch", WM8974_SPKMIX, 0, 1, 1),
+SOC_DAPM_SINGLE("PCM Playback Switch", WM8974_SPKMIX, 0, 1, 0),
 };
 
 /* Mono Output Mixer */
@@ -381,14 +386,6 @@ static int wm8974_set_dai_clkdiv(struct snd_soc_dai *codec_dai,
 		reg = snd_soc_read(codec, WM8974_CLOCK) & 0x11f;
 		snd_soc_write(codec, WM8974_CLOCK, reg | div);
 		break;
-	case WM8974_ADCCLK:
-		reg = snd_soc_read(codec, WM8974_ADC) & 0x1f7;
-		snd_soc_write(codec, WM8974_ADC, reg | div);
-		break;
-	case WM8974_DACCLK:
-		reg = snd_soc_read(codec, WM8974_DAC) & 0x1f7;
-		snd_soc_write(codec, WM8974_DAC, reg | div);
-		break;
 	case WM8974_BCLKDIV:
 		reg = snd_soc_read(codec, WM8974_CLOCK) & 0x1e3;
 		snd_soc_write(codec, WM8974_CLOCK, reg | div);
@@ -482,23 +479,23 @@ static int wm8974_pcm_hw_params(struct snd_pcm_substream *substream,
 
 	/* filter coefficient */
 	switch (params_rate(params)) {
-	case SNDRV_PCM_RATE_8000:
+	case 8000:
 		adn |= 0x5 << 1;
 		break;
-	case SNDRV_PCM_RATE_11025:
+	case 11025:
 		adn |= 0x4 << 1;
 		break;
-	case SNDRV_PCM_RATE_16000:
+	case 16000:
 		adn |= 0x3 << 1;
 		break;
-	case SNDRV_PCM_RATE_22050:
+	case 22050:
 		adn |= 0x2 << 1;
 		break;
-	case SNDRV_PCM_RATE_32000:
+	case 32000:
 		adn |= 0x1 << 1;
 		break;
-	case SNDRV_PCM_RATE_44100:
-	case SNDRV_PCM_RATE_48000:
+	case 44100:
+	case 48000:
 		break;
 	}
 
@@ -612,7 +609,7 @@ static int wm8974_resume(struct platform_device *pdev)
 		codec->hw_write(codec->control_data, data, 2);
 	}
 	wm8974_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
-	wm8974_set_bias_level(codec, codec->suspend_bias_level);
+
 	return 0;
 }
 
@@ -673,14 +670,15 @@ static __devinit int wm8974_register(struct wm8974_priv *wm8974)
 
 	if (wm8974_codec) {
 		dev_err(codec->dev, "Another WM8974 is registered\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err;
 	}
 
 	mutex_init(&codec->mutex);
 	INIT_LIST_HEAD(&codec->dapm_widgets);
 	INIT_LIST_HEAD(&codec->dapm_paths);
 
-	codec->private_data = wm8974;
+	snd_soc_codec_set_drvdata(codec, wm8974);
 	codec->name = "WM8974";
 	codec->owner = THIS_MODULE;
 	codec->bias_level = SND_SOC_BIAS_OFF;

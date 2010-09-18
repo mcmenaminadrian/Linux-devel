@@ -1296,6 +1296,8 @@ fail:
 
 int gfs2_xattr_acl_chmod(struct gfs2_inode *ip, struct iattr *attr, char *data)
 {
+	struct inode *inode = &ip->i_inode;
+	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct gfs2_ea_location el;
 	struct buffer_head *dibh;
 	int error;
@@ -1305,30 +1307,41 @@ int gfs2_xattr_acl_chmod(struct gfs2_inode *ip, struct iattr *attr, char *data)
 		return error;
 
 	if (GFS2_EA_IS_STUFFED(el.el_ea)) {
-		error = gfs2_trans_begin(GFS2_SB(&ip->i_inode), RES_DINODE + RES_EATTR, 0);
-		if (error)
-			return error;
-
-		gfs2_trans_add_bh(ip->i_gl, el.el_bh, 1);
-		memcpy(GFS2_EA2DATA(el.el_ea), data,
-		       GFS2_EA_DATA_LEN(el.el_ea));
-	} else
+		error = gfs2_trans_begin(sdp, RES_DINODE + RES_EATTR, 0);
+		if (error == 0) {
+			gfs2_trans_add_bh(ip->i_gl, el.el_bh, 1);
+			memcpy(GFS2_EA2DATA(el.el_ea), data,
+			       GFS2_EA_DATA_LEN(el.el_ea));
+		}
+	} else {
 		error = ea_acl_chmod_unstuffed(ip, el.el_ea, data);
+	}
 
+	brelse(el.el_bh);
 	if (error)
 		return error;
 
 	error = gfs2_meta_inode_buffer(ip, &dibh);
-	if (!error) {
-		error = inode_setattr(&ip->i_inode, attr);
-		gfs2_assert_warn(GFS2_SB(&ip->i_inode), !error);
-		gfs2_trans_add_bh(ip->i_gl, dibh, 1);
-		gfs2_dinode_out(ip, dibh->b_data);
-		brelse(dibh);
+	if (error)
+		goto out_trans_end;
+
+	if ((attr->ia_valid & ATTR_SIZE) &&
+	    attr->ia_size != i_size_read(inode)) {
+		int error;
+
+		error = vmtruncate(inode, attr->ia_size);
+		gfs2_assert_warn(GFS2_SB(inode), !error);
 	}
 
-	gfs2_trans_end(GFS2_SB(&ip->i_inode));
+	setattr_copy(inode, attr);
+	mark_inode_dirty(inode);
 
+	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+	gfs2_dinode_out(ip, dibh->b_data);
+	brelse(dibh);
+
+out_trans_end:
+	gfs2_trans_end(sdp);
 	return error;
 }
 
@@ -1534,21 +1547,21 @@ out_alloc:
 	return error;
 }
 
-static struct xattr_handler gfs2_xattr_user_handler = {
+static const struct xattr_handler gfs2_xattr_user_handler = {
 	.prefix = XATTR_USER_PREFIX,
 	.flags  = GFS2_EATYPE_USR,
 	.get    = gfs2_xattr_get,
 	.set    = gfs2_xattr_set,
 };
 
-static struct xattr_handler gfs2_xattr_security_handler = {
+static const struct xattr_handler gfs2_xattr_security_handler = {
 	.prefix = XATTR_SECURITY_PREFIX,
 	.flags  = GFS2_EATYPE_SECURITY,
 	.get    = gfs2_xattr_get,
 	.set    = gfs2_xattr_set,
 };
 
-struct xattr_handler *gfs2_xattr_handlers[] = {
+const struct xattr_handler *gfs2_xattr_handlers[] = {
 	&gfs2_xattr_user_handler,
 	&gfs2_xattr_security_handler,
 	&gfs2_xattr_system_handler,

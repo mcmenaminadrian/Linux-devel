@@ -201,9 +201,9 @@ static int do_microcode_update(const void __user *buf, size_t size)
 	return error;
 }
 
-static int microcode_open(struct inode *unused1, struct file *unused2)
+static int microcode_open(struct inode *inode, struct file *file)
 {
-	return capable(CAP_SYS_RAWIO) ? 0 : -EPERM;
+	return capable(CAP_SYS_RAWIO) ? nonseekable_open(inode, file) : -EPERM;
 }
 
 static ssize_t microcode_write(struct file *file, const char __user *buf,
@@ -260,6 +260,7 @@ static void microcode_dev_exit(void)
 }
 
 MODULE_ALIAS_MISCDEV(MICROCODE_MINOR);
+MODULE_ALIAS("devname:cpu/microcode");
 #else
 #define microcode_dev_init()	0
 #define microcode_dev_exit()	do { } while (0)
@@ -521,9 +522,6 @@ static int __init microcode_init(void)
 		return PTR_ERR(microcode_pdev);
 	}
 
-	if (microcode_ops->init)
-		microcode_ops->init(&microcode_pdev->dev);
-
 	get_online_cpus();
 	mutex_lock(&microcode_mutex);
 
@@ -565,9 +563,6 @@ static void __exit microcode_exit(void)
 	put_online_cpus();
 
 	platform_device_unregister(microcode_pdev);
-
-	if (microcode_ops->fini)
-		microcode_ops->fini();
 
 	microcode_ops = NULL;
 

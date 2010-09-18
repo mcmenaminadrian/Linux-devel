@@ -17,7 +17,6 @@
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/time.h>
 #include <linux/major.h>
@@ -28,6 +27,7 @@
 #include <linux/reboot.h>
 #include <linux/tty.h>
 #include <linux/console.h>
+#include <linux/slab.h>
 
 #include <asm/reg.h>
 #include <asm/uaccess.h>
@@ -387,8 +387,9 @@ EXPORT_SYMBOL(dump_elf_task_fp);
  * sys_execve() executes a new program.
  */
 asmlinkage int
-do_sys_execve(char __user *ufilename, char __user * __user *argv,
-	      char __user * __user *envp, struct pt_regs *regs)
+do_sys_execve(const char __user *ufilename,
+	      const char __user *const __user *argv,
+	      const char __user *const __user *envp, struct pt_regs *regs)
 {
 	int error;
 	char *filename;

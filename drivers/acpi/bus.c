@@ -32,6 +32,7 @@
 #include <linux/device.h>
 #include <linux/proc_fs.h>
 #include <linux/acpi.h>
+#include <linux/slab.h>
 #ifdef CONFIG_X86
 #include <asm/mpspec.h>
 #endif
@@ -67,6 +68,44 @@ static struct dmi_system_id __cpuinitdata power_nocheck_dmi_table[] = {
 	{},
 };
 
+
+#ifdef CONFIG_X86
+static int set_copy_dsdt(const struct dmi_system_id *id)
+{
+	printk(KERN_NOTICE "%s detected - "
+		"force copy of DSDT to local memory\n", id->ident);
+	acpi_gbl_copy_dsdt_locally = 1;
+	return 0;
+}
+
+static struct dmi_system_id dsdt_dmi_table[] __initdata = {
+	/*
+	 * Insyde BIOS on some TOSHIBA machines corrupt the DSDT.
+	 * https://bugzilla.kernel.org/show_bug.cgi?id=14679
+	 */
+	{
+	 .callback = set_copy_dsdt,
+	 .ident = "TOSHIBA Satellite A505",
+	 .matches = {
+		DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+		DMI_MATCH(DMI_PRODUCT_NAME, "Satellite A505"),
+		},
+	},
+	{
+	 .callback = set_copy_dsdt,
+	 .ident = "TOSHIBA Satellite L505D",
+	 .matches = {
+		DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+		DMI_MATCH(DMI_PRODUCT_NAME, "Satellite L505D"),
+		},
+	},
+	{}
+};
+#else
+static struct dmi_system_id dsdt_dmi_table[] __initdata = {
+	{}
+};
+#endif
 
 /* --------------------------------------------------------------------------
                                 Device Management
@@ -190,16 +229,16 @@ int acpi_bus_get_power(acpi_handle handle, int *state)
 		 * Get the device's power state either directly (via _PSC) or
 		 * indirectly (via power resources).
 		 */
-		if (device->power.flags.explicit_get) {
+		if (device->power.flags.power_resources) {
+			result = acpi_power_get_inferred_state(device);
+			if (result)
+				return result;
+		} else if (device->power.flags.explicit_get) {
 			status = acpi_evaluate_integer(device->handle, "_PSC",
 						       NULL, &psc);
 			if (ACPI_FAILURE(status))
 				return -ENODEV;
 			device->power.state = (int)psc;
-		} else if (device->power.flags.power_resources) {
-			result = acpi_power_get_inferred_state(device);
-			if (result)
-				return result;
 		}
 
 		*state = device->power.state;
@@ -362,11 +401,6 @@ static void acpi_print_osc_error(acpi_handle handle,
 	printk("\n");
 }
 
-static u8 hex_val(unsigned char c)
-{
-	return isdigit(c) ? c - '0' : toupper(c) - 'A' + 10;
-}
-
 static acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
 {
 	int i;
@@ -383,8 +417,8 @@ static acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
 			return AE_BAD_PARAMETER;
 	}
 	for (i = 0; i < 16; i++) {
-		uuid[i] = hex_val(str[opc_map_to_uuid[i]]) << 4;
-		uuid[i] |= hex_val(str[opc_map_to_uuid[i] + 1]);
+		uuid[i] = hex_to_bin(str[opc_map_to_uuid[i]]) << 4;
+		uuid[i] |= hex_to_bin(str[opc_map_to_uuid[i] + 1]);
 	}
 	return AE_OK;
 }
@@ -490,8 +524,13 @@ static void acpi_bus_osc_support(void)
 
 	capbuf[OSC_QUERY_TYPE] = OSC_QUERY_ENABLE;
 	capbuf[OSC_SUPPORT_TYPE] = OSC_SB_PR3_SUPPORT; /* _PR3 is in use */
-#ifdef CONFIG_ACPI_PROCESSOR_AGGREGATOR
+#if defined(CONFIG_ACPI_PROCESSOR_AGGREGATOR) ||\
+			defined(CONFIG_ACPI_PROCESSOR_AGGREGATOR_MODULE)
 	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PAD_SUPPORT;
+#endif
+
+#if defined(CONFIG_ACPI_PROCESSOR) || defined(CONFIG_ACPI_PROCESSOR_MODULE)
+	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PPC_OST_SUPPORT;
 #endif
 	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
 		return;
@@ -521,7 +560,7 @@ int acpi_bus_generate_proc_event4(const char *device_class, const char *bus_id, 
 	if (!event_is_open)
 		return 0;
 
-	event = kmalloc(sizeof(struct acpi_bus_event), GFP_ATOMIC);
+	event = kzalloc(sizeof(struct acpi_bus_event), GFP_ATOMIC);
 	if (!event)
 		return -ENOMEM;
 
@@ -807,6 +846,12 @@ void __init acpi_early_init(void)
 
 	acpi_gbl_permanent_mmap = 1;
 
+	/*
+	 * If the machine falls into the DMI check table,
+	 * DSDT will be copied to memory
+	 */
+	dmi_check_system(dsdt_dmi_table);
+
 	status = acpi_reallocate_root_table();
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX
@@ -989,8 +1034,8 @@ static int __init acpi_init(void)
 	acpi_scan_init();
 	acpi_ec_init();
 	acpi_power_init();
-	acpi_system_init();
-	acpi_debug_init();
+	acpi_sysfs_init();
+	acpi_debugfs_init();
 	acpi_sleep_proc_init();
 	acpi_wakeup_device_init();
 	return result;

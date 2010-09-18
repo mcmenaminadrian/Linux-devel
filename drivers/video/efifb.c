@@ -16,7 +16,7 @@
 
 #include <video/vga.h>
 
-static struct fb_var_screeninfo efifb_defined __initdata = {
+static struct fb_var_screeninfo efifb_defined __devinitdata = {
 	.activate		= FB_ACTIVATE_NOW,
 	.height			= -1,
 	.width			= -1,
@@ -27,7 +27,7 @@ static struct fb_var_screeninfo efifb_defined __initdata = {
 	.vmode			= FB_VMODE_NONINTERLACED,
 };
 
-static struct fb_fix_screeninfo efifb_fix __initdata = {
+static struct fb_fix_screeninfo efifb_fix __devinitdata = {
 	.id			= "EFI VGA",
 	.type			= FB_TYPE_PACKED_PIXELS,
 	.accel			= FB_ACCEL_NONE,
@@ -49,6 +49,7 @@ enum {
 	M_MBP_2,	/* MacBook Pro 2nd gen */
 	M_MBP_SR,	/* MacBook Pro (Santa Rosa) */
 	M_MBP_4,	/* MacBook Pro, 4th gen */
+	M_MBP_5_1,    /* MacBook Pro, 5,1th gen */
 	M_UNKNOWN	/* placeholder */
 };
 
@@ -58,7 +59,7 @@ static struct efifb_dmi_info {
 	int stride;
 	int width;
 	int height;
-} dmi_list[] = {
+} dmi_list[] __initdata = {
 	[M_I17] = { "i17", 0x80010000, 1472 * 4, 1440, 900 },
 	[M_I20] = { "i20", 0x80010000, 1728 * 4, 1680, 1050 }, /* guess */
 	[M_I20_SR] = { "imac7", 0x40010000, 1728 * 4, 1680, 1050 },
@@ -70,6 +71,7 @@ static struct efifb_dmi_info {
 	[M_MBP_2] = { "mbp2", 0, 0, 0, 0 }, /* placeholder */
 	[M_MBP_SR] = { "mbp3", 0x80030000, 2048 * 4, 1440, 900 },
 	[M_MBP_4] = { "mbp4", 0xc0060000, 2048 * 4, 1920, 1200 },
+	[M_MBP_5_1] = { "mbp51", 0xc0010000, 2048 * 4, 1440, 900 },
 	[M_UNKNOWN] = { NULL, 0, 0, 0, 0 }
 };
 
@@ -81,7 +83,7 @@ static int set_system(const struct dmi_system_id *id);
 		DMI_MATCH(DMI_PRODUCT_NAME, name) },		\
 	  &dmi_list[enumid] }
 
-static struct dmi_system_id __initdata dmi_system_table[] = {
+static const struct dmi_system_id dmi_system_table[] __initconst = {
 	EFIFB_DMI_SYSTEM_ID("Apple Computer, Inc.", "iMac4,1", M_I17),
 	/* At least one of these two will be right; maybe both? */
 	EFIFB_DMI_SYSTEM_ID("Apple Computer, Inc.", "iMac5,1", M_I20),
@@ -106,6 +108,7 @@ static struct dmi_system_id __initdata dmi_system_table[] = {
 	EFIFB_DMI_SYSTEM_ID("Apple Computer, Inc.", "MacBookPro3,1", M_MBP_SR),
 	EFIFB_DMI_SYSTEM_ID("Apple Inc.", "MacBookPro3,1", M_MBP_SR),
 	EFIFB_DMI_SYSTEM_ID("Apple Inc.", "MacBookPro4,1", M_MBP_4),
+	EFIFB_DMI_SYSTEM_ID("Apple Inc.", "MacBookPro5,1", M_MBP_5_1),
 	{},
 };
 
@@ -161,8 +164,17 @@ static int efifb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	return 0;
 }
 
+static void efifb_destroy(struct fb_info *info)
+{
+	if (info->screen_base)
+		iounmap(info->screen_base);
+	release_mem_region(info->apertures->ranges[0].base, info->apertures->ranges[0].size);
+	framebuffer_release(info);
+}
+
 static struct fb_ops efifb_ops = {
 	.owner		= THIS_MODULE,
+	.fb_destroy	= efifb_destroy,
 	.fb_setcolreg	= efifb_setcolreg,
 	.fb_fillrect	= cfb_fillrect,
 	.fb_copyarea	= cfb_copyarea,
@@ -201,7 +213,7 @@ static int __init efifb_setup(char *options)
 	return 0;
 }
 
-static int __init efifb_probe(struct platform_device *dev)
+static int __devinit efifb_probe(struct platform_device *dev)
 {
 	struct fb_info *info;
 	int err;
@@ -280,8 +292,13 @@ static int __init efifb_probe(struct platform_device *dev)
 	info->pseudo_palette = info->par;
 	info->par = NULL;
 
-	info->aperture_base = efifb_fix.smem_start;
-	info->aperture_size = size_total;
+	info->apertures = alloc_apertures(1);
+	if (!info->apertures) {
+		err = -ENOMEM;
+		goto err_release_fb;
+	}
+	info->apertures->ranges[0].base = efifb_fix.smem_start;
+	info->apertures->ranges[0].size = size_remap;
 
 	info->screen_base = ioremap(efifb_fix.smem_start, efifb_fix.smem_len);
 	if (!info->screen_base) {

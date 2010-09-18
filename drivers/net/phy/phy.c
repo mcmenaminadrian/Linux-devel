@@ -19,7 +19,6 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/unistd.h>
-#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -302,7 +301,7 @@ EXPORT_SYMBOL(phy_ethtool_gset);
 /**
  * phy_mii_ioctl - generic PHY MII ioctl interface
  * @phydev: the phy_device struct
- * @mii_data: MII ioctl data
+ * @ifr: &struct ifreq for socket ioctl's
  * @cmd: ioctl cmd to execute
  *
  * Note that this function is currently incompatible with the
@@ -310,8 +309,9 @@ EXPORT_SYMBOL(phy_ethtool_gset);
  * current state.  Use at own risk.
  */
 int phy_mii_ioctl(struct phy_device *phydev,
-		struct mii_ioctl_data *mii_data, int cmd)
+		struct ifreq *ifr, int cmd)
 {
+	struct mii_ioctl_data *mii_data = if_mii(ifr);
 	u16 val = mii_data->val_in;
 
 	switch (cmd) {
@@ -360,6 +360,11 @@ int phy_mii_ioctl(struct phy_device *phydev,
 			phydev->drv->config_init(phydev);
 		}
 		break;
+
+	case SIOCSHWTSTAMP:
+		if (phydev->drv->hwtstamp)
+			return phydev->drv->hwtstamp(phydev, ifr);
+		/* fall through */
 
 	default:
 		return -EOPNOTSUPP;
@@ -410,7 +415,6 @@ EXPORT_SYMBOL(phy_start_aneg);
 
 
 static void phy_change(struct work_struct *work);
-static void phy_state_machine(struct work_struct *work);
 
 /**
  * phy_start_machine - start PHY state machine tracking
@@ -430,7 +434,6 @@ void phy_start_machine(struct phy_device *phydev,
 {
 	phydev->adjust_state = handler;
 
-	INIT_DELAYED_WORK(&phydev->state_queue, phy_state_machine);
 	schedule_delayed_work(&phydev->state_queue, HZ);
 }
 
@@ -761,7 +764,7 @@ EXPORT_SYMBOL(phy_start);
  * phy_state_machine - Handle the state machine
  * @work: work_struct that describes the work to be done
  */
-static void phy_state_machine(struct work_struct *work)
+void phy_state_machine(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct phy_device *phydev =

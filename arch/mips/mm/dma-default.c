@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/scatterlist.h>
 #include <linux/string.h>
+#include <linux/gfp.h>
 
 #include <asm/cache.h>
 #include <asm/io.h>
@@ -355,13 +356,6 @@ int dma_supported(struct device *dev, u64 mask)
 }
 
 EXPORT_SYMBOL(dma_supported);
-
-int dma_is_consistent(struct device *dev, dma_addr_t dma_addr)
-{
-	return plat_device_is_coherent(dev);
-}
-
-EXPORT_SYMBOL(dma_is_consistent);
 
 void dma_cache_sync(struct device *dev, void *vaddr, size_t size,
 	       enum dma_data_direction direction)

@@ -256,7 +256,7 @@ void saa7134_dma_free(struct videobuf_queue *q,struct saa7134_buf *buf)
 	BUG_ON(in_interrupt());
 
 	videobuf_waiton(&buf->vb,0,0);
-	videobuf_dma_unmap(q, dma);
+	videobuf_dma_unmap(q->dev, dma);
 	videobuf_dma_free(dma);
 	buf->vb.state = VIDEOBUF_NEEDS_INIT;
 }
@@ -420,19 +420,6 @@ int saa7134_set_dmabits(struct saa7134_dev *dev)
 		ctrl |= SAA7134_MAIN_CTRL_TE5;
 		irq  |= SAA7134_IRQ1_INTE_RA2_1 |
 			SAA7134_IRQ1_INTE_RA2_0;
-
-		/* dma: setup channel 5 (= TS) */
-
-		saa_writeb(SAA7134_TS_DMA0, (dev->ts.nr_packets - 1) & 0xff);
-		saa_writeb(SAA7134_TS_DMA1,
-			((dev->ts.nr_packets - 1) >> 8) & 0xff);
-		/* TSNOPIT=0, TSCOLAP=0 */
-		saa_writeb(SAA7134_TS_DMA2,
-			(((dev->ts.nr_packets - 1) >> 16) & 0x3f) | 0x00);
-		saa_writel(SAA7134_RS_PITCH(5), TS_PACKET_SIZE);
-		saa_writel(SAA7134_RS_CONTROL(5), SAA7134_RS_CONTROL_BURST_16 |
-						  SAA7134_RS_CONTROL_ME |
-						  (dev->ts.pt_ts.dma >> 12));
 	}
 
 	/* set task conditions + field handling */
@@ -484,7 +471,7 @@ static char *irqbits[] = {
 	"DONE_RA0", "DONE_RA1", "DONE_RA2", "DONE_RA3",
 	"AR", "PE", "PWR_ON", "RDCAP", "INTL", "FIDT", "MMC",
 	"TRIG_ERR", "CONF_ERR", "LOAD_ERR",
-	"GPIO16?", "GPIO18", "GPIO22", "GPIO23"
+	"GPIO16", "GPIO18", "GPIO22", "GPIO23"
 };
 #define IRQBITS ARRAY_SIZE(irqbits)
 
@@ -614,12 +601,14 @@ static irqreturn_t saa7134_irq(int irq, void *dev_id)
 			/* disable gpio16 IRQ */
 			printk(KERN_WARNING "%s/irq: looping -- "
 			       "clearing GPIO16 enable bit\n",dev->name);
-			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO16);
+			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO16_P);
+			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO16_N);
 		} else if (report & SAA7134_IRQ_REPORT_GPIO18) {
 			/* disable gpio18 IRQs */
 			printk(KERN_WARNING "%s/irq: looping -- "
 			       "clearing GPIO18 enable bit\n",dev->name);
-			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18);
+			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18_P);
+			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18_N);
 		} else {
 			/* disable all irqs */
 			printk(KERN_WARNING "%s/irq: looping -- "
@@ -711,11 +700,13 @@ static int saa7134_hw_enable2(struct saa7134_dev *dev)
 
 	if (dev->has_remote == SAA7134_REMOTE_GPIO && dev->remote) {
 		if (dev->remote->mask_keydown & 0x10000)
-			irq2_mask |= SAA7134_IRQ2_INTE_GPIO16;
-		else if (dev->remote->mask_keydown & 0x40000)
-			irq2_mask |= SAA7134_IRQ2_INTE_GPIO18;
-		else if (dev->remote->mask_keyup & 0x40000)
-			irq2_mask |= SAA7134_IRQ2_INTE_GPIO18A;
+			irq2_mask |= SAA7134_IRQ2_INTE_GPIO16_N;
+		else {		/* Allow enabling both IRQ edge triggers */
+			if (dev->remote->mask_keydown & 0x40000)
+				irq2_mask |= SAA7134_IRQ2_INTE_GPIO18_P;
+			if (dev->remote->mask_keyup & 0x40000)
+				irq2_mask |= SAA7134_IRQ2_INTE_GPIO18_N;
+		}
 	}
 
 	if (dev->has_remote == SAA7134_REMOTE_I2C) {
@@ -1240,7 +1231,7 @@ static int saa7134_resume(struct pci_dev *pci_dev)
 	if (card_has_mpeg(dev))
 		saa7134_ts_init_hw(dev);
 	if (dev->remote)
-		saa7134_ir_start(dev, dev->remote);
+		saa7134_ir_start(dev);
 	saa7134_hw_enable1(dev);
 
 	msleep(100);

@@ -14,11 +14,6 @@
 #define __ASM_ARCH_HARDWARE_H
 
 /*
- * We requires absolute addresses.
- */
-#define PCIO_BASE		0
-
-/*
  * Workarounds for at least 2 errata so far require this.
  * The mapping is set in mach-pxa/generic.c.
  */
@@ -202,7 +197,7 @@
 #define __cpu_is_pxa950(id)                             \
 	({                                              \
 		unsigned int _id = (id) >> 4 & 0xfff;	\
-		id == 0x697;				\
+		_id == 0x697;				\
 	 })
 #else
 #define __cpu_is_pxa950(id)	(0)
@@ -250,20 +245,17 @@
 
 #define cpu_is_pxa930()					\
 	({						\
-		unsigned int id = read_cpuid(CPUID_ID);	\
-		__cpu_is_pxa930(id);			\
+		__cpu_is_pxa930(read_cpuid_id());	\
 	 })
 
 #define cpu_is_pxa935()					\
 	({						\
-		unsigned int id = read_cpuid(CPUID_ID);	\
-		__cpu_is_pxa935(id);			\
+		__cpu_is_pxa935(read_cpuid_id());	\
 	 })
 
 #define cpu_is_pxa950()					\
 	({						\
-		unsigned int id = read_cpuid(CPUID_ID);	\
-		__cpu_is_pxa950(id);			\
+		__cpu_is_pxa950(read_cpuid_id());	\
 	 })
 
 
@@ -317,7 +309,6 @@ extern unsigned long get_clock_tick_rate(void);
 #define PCIBIOS_MIN_IO		0
 #define PCIBIOS_MIN_MEM		0
 #define pcibios_assign_all_busses()	1
-#define HAVE_ARCH_PCI_SET_DMA_MASK	1
 #endif
 
 

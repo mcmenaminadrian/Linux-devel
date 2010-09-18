@@ -1,7 +1,7 @@
 /*
  * MTD Oops/Panic logger
  *
- * Copyright (C) 2007 Nokia Corporation. All rights reserved.
+ * Copyright © 2007 Nokia Corporation. All rights reserved.
  *
  * Author: Richard Purdie <rpurdie@openedhand.com>
  *
@@ -322,7 +322,7 @@ static void mtdoops_do_dump(struct kmsg_dumper *dumper,
 	memcpy(dst + l1_cpy, s2 + s2_start, l2_cpy);
 
 	/* Panics must be written immediately */
-	if (reason == KMSG_DUMP_PANIC) {
+	if (reason != KMSG_DUMP_OOPS) {
 		if (!cxt->mtd->panic_write)
 			printk(KERN_ERR "mtdoops: Cannot write from panic without panic_write\n");
 		else
@@ -429,11 +429,6 @@ static int __init mtdoops_init(void)
 	mtd_index = simple_strtoul(mtddev, &endp, 0);
 	if (*endp == '\0')
 		cxt->mtd_index = mtd_index;
-	if (cxt->mtd_index > MAX_MTD_DEVICES) {
-		printk(KERN_ERR "mtdoops: invalid mtd device number (%u) given\n",
-				mtd_index);
-		return -EINVAL;
-	}
 
 	cxt->oops_buf = vmalloc(record_size);
 	if (!cxt->oops_buf) {

@@ -49,6 +49,7 @@
 #include <linux/mtd/nand_ecc.h>
 #include <linux/mtd/partitions.h>
 
+#include <plat/gpio-cfg.h>
 #include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
@@ -208,6 +209,7 @@ static struct s3c2410_nand_set __initdata osiris_nand_sets[] = {
 		.name		= "External",
 		.nr_chips	= 1,
 		.nr_map		= external_map,
+		.options	= NAND_SCAN_SILENT_NODEV,
 		.nr_partitions	= ARRAY_SIZE(osiris_default_nand_part),
 		.partitions	= osiris_default_nand_part,
 	},
@@ -222,6 +224,7 @@ static struct s3c2410_nand_set __initdata osiris_nand_sets[] = {
 		.name		= "chip1",
 		.nr_chips	= 1,
 		.nr_map		= chip1_map,
+		.options	= NAND_SCAN_SILENT_NODEV,
 		.nr_partitions	= ARRAY_SIZE(osiris_default_nand_part),
 		.partitions	= osiris_default_nand_part,
 	},
@@ -296,7 +299,7 @@ static int osiris_pm_suspend(struct sys_device *sd, pm_message_t state)
 
 	/* ensure that an nRESET is not generated on resume. */
 	s3c2410_gpio_setpin(S3C2410_GPA(21), 1);
-	s3c2410_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPIO_OUTPUT);
+	s3c_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPIO_OUTPUT);
 
 	return 0;
 }
@@ -308,7 +311,7 @@ static int osiris_pm_resume(struct sys_device *sd)
 
 	__raw_writeb(pm_osiris_ctrl0, OSIRIS_VA_CTRL0);
 
-	s3c2410_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPA21_nRSTOUT);
+	s3c_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPA21_nRSTOUT);
 
 	return 0;
 }
