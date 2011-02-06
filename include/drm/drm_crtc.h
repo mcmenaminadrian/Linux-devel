@@ -221,7 +221,8 @@ struct drm_framebuffer_funcs {
 	 * the semantics and arguments have a one to one mapping
 	 * on this function.
 	 */
-	int (*dirty)(struct drm_framebuffer *framebuffer, unsigned flags,
+	int (*dirty)(struct drm_framebuffer *framebuffer,
+		     struct drm_file *file_priv, unsigned flags,
 		     unsigned color, struct drm_clip_rect *clips,
 		     unsigned num_clips);
 };
@@ -350,7 +351,13 @@ struct drm_crtc {
 
 	bool enabled;
 
+	/* Requested mode from modesetting. */
 	struct drm_display_mode mode;
+
+	/* Programmed mode in hw, after adjustments for encoders,
+	 * crtc, panel scaling etc. Needed for timestamping etc.
+	 */
+	struct drm_display_mode hwmode;
 
 	int x, y;
 	const struct drm_crtc_funcs *funcs;
@@ -358,6 +365,9 @@ struct drm_crtc {
 	/* CRTC gamma size for reporting to userspace */
 	uint32_t gamma_size;
 	uint16_t *gamma_store;
+
+	/* Constants needed for precise vblank and swap timestamping. */
+	s64 framedur_ns, linedur_ns, pixeldur_ns;
 
 	/* if you are using the helper */
 	void *helper_private;
@@ -762,6 +772,7 @@ extern int drm_mode_gamma_get_ioctl(struct drm_device *dev,
 extern int drm_mode_gamma_set_ioctl(struct drm_device *dev,
 				    void *data, struct drm_file *file_priv);
 extern bool drm_detect_hdmi_monitor(struct edid *edid);
+extern bool drm_detect_monitor_audio(struct edid *edid);
 extern int drm_mode_page_flip_ioctl(struct drm_device *dev,
 				    void *data, struct drm_file *file_priv);
 extern struct drm_display_mode *drm_cvt_mode(struct drm_device *dev,

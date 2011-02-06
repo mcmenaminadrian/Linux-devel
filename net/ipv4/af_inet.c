@@ -227,18 +227,16 @@ EXPORT_SYMBOL(inet_ehash_secret);
 
 /*
  * inet_ehash_secret must be set exactly once
- * Instead of using a dedicated spinlock, we (ab)use inetsw_lock
  */
 void build_ehash_secret(void)
 {
 	u32 rnd;
+
 	do {
 		get_random_bytes(&rnd, sizeof(rnd));
 	} while (rnd == 0);
-	spin_lock_bh(&inetsw_lock);
-	if (!inet_ehash_secret)
-		inet_ehash_secret = rnd;
-	spin_unlock_bh(&inetsw_lock);
+
+	cmpxchg(&inet_ehash_secret, 0, rnd);
 }
 EXPORT_SYMBOL(build_ehash_secret);
 
@@ -1150,21 +1148,13 @@ int inet_sk_rebuild_header(struct sock *sk)
 	struct flowi fl = {
 		.oif = sk->sk_bound_dev_if,
 		.mark = sk->sk_mark,
-		.nl_u = {
-			.ip4_u = {
-				.daddr	= daddr,
-				.saddr	= inet->inet_saddr,
-				.tos	= RT_CONN_FLAGS(sk),
-			},
-		},
+		.fl4_dst = daddr,
+		.fl4_src = inet->inet_saddr,
+		.fl4_tos = RT_CONN_FLAGS(sk),
 		.proto = sk->sk_protocol,
 		.flags = inet_sk_flowi_flags(sk),
-		.uli_u = {
-			.ports = {
-				.sport = inet->inet_sport,
-				.dport = inet->inet_dport,
-			},
-		},
+		.fl_ip_sport = inet->inet_sport,
+		.fl_ip_dport = inet->inet_dport,
 	};
 
 	security_sk_classify_flow(sk, &fl);

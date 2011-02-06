@@ -1487,7 +1487,7 @@ static void __init depca_platform_probe (void)
 		if (!pldev->dev.driver) {
 		/* The driver was not bound to this device, there was
 		 * no hardware at this address. Unregister it, as the
-		 * release fuction will take care of freeing the
+		 * release function will take care of freeing the
 		 * allocated structure */
 
 			depca_io_ports[i].device = NULL;
@@ -1513,7 +1513,7 @@ static enum depca_type __init depca_shmem_probe (ulong *mem_start)
 	return adapter;
 }
 
-static int __init depca_isa_probe (struct platform_device *device)
+static int __devinit depca_isa_probe (struct platform_device *device)
 {
 	struct net_device *dev;
 	struct depca_private *lp;

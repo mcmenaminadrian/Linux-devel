@@ -241,18 +241,15 @@ extern void _memset_io(volatile void __iomem *, int, size_t);
  *
  */
 #ifndef __arch_ioremap
-#define ioremap(cookie,size)		__arm_ioremap(cookie, size, MT_DEVICE)
-#define ioremap_nocache(cookie,size)	__arm_ioremap(cookie, size, MT_DEVICE)
-#define ioremap_cached(cookie,size)	__arm_ioremap(cookie, size, MT_DEVICE_CACHED)
-#define ioremap_wc(cookie,size)		__arm_ioremap(cookie, size, MT_DEVICE_WC)
-#define iounmap(cookie)			__iounmap(cookie)
-#else
+#define __arch_ioremap			__arm_ioremap
+#define __arch_iounmap			__iounmap
+#endif
+
 #define ioremap(cookie,size)		__arch_ioremap((cookie), (size), MT_DEVICE)
 #define ioremap_nocache(cookie,size)	__arch_ioremap((cookie), (size), MT_DEVICE)
 #define ioremap_cached(cookie,size)	__arch_ioremap((cookie), (size), MT_DEVICE_CACHED)
 #define ioremap_wc(cookie,size)		__arch_ioremap((cookie), (size), MT_DEVICE_WC)
-#define iounmap(cookie)			__arch_iounmap(cookie)
-#endif
+#define iounmap				__arch_iounmap
 
 /*
  * io{read,write}{8,16,32} macros
@@ -294,6 +291,7 @@ extern void pci_iounmap(struct pci_dev *dev, void __iomem *addr);
 #define ARCH_HAS_VALID_PHYS_ADDR_RANGE
 extern int valid_phys_addr_range(unsigned long addr, size_t size);
 extern int valid_mmap_phys_addr_range(unsigned long pfn, size_t size);
+extern int devmem_is_allowed(unsigned long pfn);
 #endif
 
 /*
