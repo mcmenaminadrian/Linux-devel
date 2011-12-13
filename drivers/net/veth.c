@@ -17,6 +17,7 @@
 #include <net/dst.h>
 #include <net/xfrm.h>
 #include <linux/veth.h>
+#include <linux/module.h>
 
 #define DRV_NAME	"veth"
 #define DRV_VERSION	"1.0"
@@ -262,6 +263,8 @@ static const struct net_device_ops veth_netdev_ops = {
 static void veth_setup(struct net_device *dev)
 {
 	ether_setup(dev);
+
+	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
 
 	dev->netdev_ops = &veth_netdev_ops;
 	dev->ethtool_ops = &veth_ethtool_ops;

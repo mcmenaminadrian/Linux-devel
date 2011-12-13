@@ -2532,6 +2532,9 @@ static void _isdn_setup(struct net_device *dev)
 
 	/* Setup the generic properties */
 	dev->flags = IFF_NOARP|IFF_POINTOPOINT;
+
+	/* isdn prepends a header in the tx path, can't share skbs */
+	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
 	dev->header_ops = NULL;
 	dev->netdev_ops = &isdn_netdev_ops;
 
@@ -2753,6 +2756,9 @@ isdn_net_setcfg(isdn_net_ioctl_cfg * cfg)
 			char *c,
 			*e;
 
+			if (strnlen(cfg->drvid, sizeof(cfg->drvid)) ==
+					sizeof(cfg->drvid))
+				return -EINVAL;
 			drvidx = -1;
 			chidx = -1;
 			strcpy(drvid, cfg->drvid);

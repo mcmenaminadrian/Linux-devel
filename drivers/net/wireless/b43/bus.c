@@ -3,6 +3,8 @@
   Broadcom B43 wireless driver
   Bus abstraction layer
 
+  Copyright (c) 2011 Rafał Miłecki <zajec5@gmail.com>
+
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
@@ -244,10 +246,12 @@ void b43_bus_set_wldev(struct b43_bus_dev *dev, void *wldev)
 #ifdef CONFIG_B43_BCMA
 	case B43_BUS_BCMA:
 		bcma_set_drvdata(dev->bdev, wldev);
+		break;
 #endif
 #ifdef CONFIG_B43_SSB
 	case B43_BUS_SSB:
 		ssb_set_drvdata(dev->sdev, wldev);
+		break;
 #endif
 	}
 }

@@ -13,11 +13,12 @@
 struct tag;
 struct meminfo;
 struct sys_timer;
+struct pt_regs;
 
 struct machine_desc {
 	unsigned int		nr;		/* architecture number	*/
 	const char		*name;		/* architecture name	*/
-	unsigned long		boot_params;	/* tagged list		*/
+	unsigned long		atag_offset;	/* tagged list (relative) */
 	const char		**dt_compat;	/* array of device tree
 						 * 'compatible' strings	*/
 
@@ -34,8 +35,7 @@ struct machine_desc {
 	unsigned int		reserve_lp1 :1;	/* never has lp1	*/
 	unsigned int		reserve_lp2 :1;	/* never has lp2	*/
 	unsigned int		soft_reboot :1;	/* soft reboot		*/
-	void			(*fixup)(struct machine_desc *,
-					 struct tag *, char **,
+	void			(*fixup)(struct tag *, char **,
 					 struct meminfo *);
 	void			(*reserve)(void);/* reserve mem blocks	*/
 	void			(*map_io)(void);/* IO mapping function	*/
@@ -73,5 +73,12 @@ static const struct machine_desc __mach_desc_##_type	\
 
 #define MACHINE_END				\
 };
+
+#define DT_MACHINE_START(_name, _namestr)		\
+static const struct machine_desc __mach_desc_##_name	\
+ __used							\
+ __attribute__((__section__(".arch.info.init"))) = {	\
+	.nr		= ~0,				\
+	.name		= _namestr,
 
 #endif
