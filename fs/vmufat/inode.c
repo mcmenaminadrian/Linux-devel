@@ -9,28 +9,11 @@
 #include <linux/fs.h>
 #include <linux/bcd.h>
 #include <linux/slab.h>
+#include <linux/magic.h>
 #include <linux/module.h>
 #include <linux/statfs.h>
 #include <linux/buffer_head.h>
-
-
-/* VMU hardware is flaky, so let's compensate for that
- * without losing hardare independence -
- * as it is likely to be where this filesystem is used
- */
-static inline struct buffer_head *vmufat_sb_bread(struct super_block *sb,
-	sector_t block)
-{
-	struct buffer_head *bh;
-	bh = sb_bread(sb, block);
-	if (bh)
-		return bh;
-	return sb_bread(sb, block);
-}
-
-/* Linear day numbers of the respective 1sts in non-leap years. */
-static int day_n[] =
-    {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+#include "vmufat.h"
 
 static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	struct nameidata *nd)
@@ -762,7 +745,7 @@ static int vmufat_statfs(struct dentry *dentry, struct kstatfs *buf)
  * no need to waste time and effort by actually
  * wiping underlying data on media
  */
-static void vmufat_delete_inode(struct inode *in)
+static void vmufat_evict_inode(struct inode *in)
 {
 	struct buffer_head *bh, *bh_old;
 	struct super_block *sb;
@@ -872,7 +855,7 @@ static void vmufat_delete_inode(struct inode *in)
 			break;
 		}
 	}
-
+	end_writeback(in);
 	brelse(bh);
 	return;
 
@@ -886,7 +869,7 @@ failure:
  * vmufat_unlink - delete a file pointed to
  * by the dentry (only one directory in a
  * vmufat fs so safe to ignore the inode
- * upplied here
+ * supplied here
  */
 static int vmufat_unlink(struct inode *dir, struct dentry *dentry)
 {
@@ -895,7 +878,7 @@ static int vmufat_unlink(struct inode *dir, struct dentry *dentry)
 	in = dentry->d_inode;
 	if (!in)
 		return -EIO;
-	vmufat_delete_inode(in);
+	vmufat_evict_inode(in);
 	return 0;
 }
 
@@ -991,12 +974,12 @@ static int vmufat_writepage(struct page *page, struct writeback_control *wbc)
 	return block_write_full_page(page, vmufat_get_block, wbc);
 }
 
-static int vmufat_write_begin(struct file *file, struct address_space *mapping,
+static int vmufat_write_begin(struct file *filp, struct address_space *mapping,
 		loff_t pos, unsigned len, unsigned flags,
 		struct page **pagep, void **fsdata)
 {
 	*pagep = NULL;
-	return block_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	return block_write_begin(mapping, pos, len, flags, pagep,
 		vmufat_get_block);
 }
 
@@ -1009,7 +992,7 @@ static int vmufat_readpage(struct file *file, struct page *page)
  * There are no inodes on the medium - vmufat_write_inode
  * updates the directory entry
  */
-static int vmufat_write_inode(struct inode *in, int wait)
+static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 {
 	struct buffer_head *bh;
 	unsigned long inode_num;
@@ -1219,7 +1202,7 @@ static const struct super_operations vmufat_super_operations = {
 	.alloc_inode =		vmufat_alloc_inode,
 	.destroy_inode =	vmufat_destroy_inode,
 	.write_inode =		vmufat_write_inode,
-	.delete_inode =		vmufat_delete_inode,
+	.evict_inode =		vmufat_evict_inode,
 	.put_super =		vmufat_put_super,
 	.statfs =		vmufat_statfs,
 };
@@ -1234,7 +1217,6 @@ static const struct file_operations vmufat_file_dir_operations = {
 	.owner =	THIS_MODULE,
 	.read =		generic_read_dir,
 	.readdir =	vmufat_readdir,
-	.fsync =	file_fsync,
 };
 
 static const struct file_operations vmufat_file_operations = {
@@ -1245,17 +1227,16 @@ static const struct file_operations vmufat_file_operations = {
 	.aio_write =	generic_file_aio_write,
 };
 
-static int vmufat_get_sb(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
+static struct dentry *vmufat_mount(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data)
 {
-	return get_sb_bdev(fs_type, flags, dev_name, data, vmufat_fill_super,
-			   mnt);
+	return mount_bdev(fs_type, flags, dev_name, data, vmufat_fill_super);
 }
 
 static struct file_system_type vmufat_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "vmufat",
-	.get_sb		= vmufat_get_sb,
+	.mount		= vmufat_mount,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
@@ -1278,6 +1259,6 @@ static void __exit exit_vmufat_fs(void)
 module_init(init_vmufat_fs);
 module_exit(exit_vmufat_fs);
 
-MODULE_DESCRIPTION("Filesystem for Sega Dreamcast VMU");
-MODULE_AUTHOR("Adrian McMenamin <adrian@mcmen.demon.co.uk>");
+MODULE_DESCRIPTION("Filesystem used in Sega Dreamcast VMU");
+MODULE_AUTHOR("Adrian McMenamin <adrianmcmenamin@gmail.com>");
 MODULE_LICENSE("GPL");

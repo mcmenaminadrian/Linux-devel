@@ -88,4 +88,10 @@ static inline int vmufat_index_16(int fno)
 {
 	return (fno % DIR_ENT_PER_BLK) * DIR_REC_LEN / 2;
 }
+
+static inline struct buffer_head *vmufat_sb_bread(struct super_block *sb,
+	sector_t block)
+{
+	return sb_bread(sb, block);
+}
 #endif
