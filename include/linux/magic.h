@@ -29,6 +29,7 @@
 #define JFFS2_SUPER_MAGIC	0x72b6
 #define ANON_INODE_FS_MAGIC	0x09041934
 #define PSTOREFS_MAGIC		0x6165676C
+#define VMUFAT_MAGIC		0x55555555	/* some random number */
 
 #define MINIX_SUPER_MAGIC	0x137F		/* minix v1 fs, 14 char names */
 #define MINIX_SUPER_MAGIC2	0x138F		/* minix v1 fs, 30 char names */
