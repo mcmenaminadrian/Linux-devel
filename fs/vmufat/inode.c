@@ -1,7 +1,7 @@
 /*
- * inode operations for the VMU file system
+ * inode operations for the VMUFAT file system
  *
- * Copyright (C) 2002 - 2011	Adrian McMenamin
+ * Copyright (C) 2002 - 2012	Adrian McMenamin
  * Copyright (C) 2002		Paul Mundt
  *
  * Released under the terms of the GNU GPL.
@@ -128,7 +128,7 @@ out_of_loop:
 		return (vmudetails->fat_bnum - fatcnt) * VMU_BLK_SZ / 2 + cnt;
 	}
 
-	printk(KERN_ERR "VMUFAT: device is full\n");
+	printk(KERN_ERR "VMUFAT: volume is full\n");
 	error = -ENOSPC;
 fail:
 	return error;
@@ -185,46 +185,50 @@ static int vmufat_set_fat(struct super_block *sb, long block, u16 set)
  * in the appropriate part of the 
  * directory entry
  */
-static unsigned long vmufat_save_bcd(char *bh, int z)
+static unsigned long vmufat_save_bcd(char *bh, int index_to_dir)
 {
 	unsigned char day, year, century, nl_day, month;
 	unsigned char u8year;
 	unsigned long unix_date = CURRENT_TIME.tv_sec;
 
-	day = unix_date / 86400 - 3652;
-	year = day / 365;
+	day = unix_date / SECONDS_PER_DAY - 3652;
+	year = day / DAYS_PER_YEAR;
 
-	if ((year + 3) / 4 + 365 * year > day)
+	if ((year + 3) / 4 + DAYS_PER_YEAR * year > day)
 		year--;
 
-	day -= (year + 3) / 4 + 365 * year;
+	day -= (year + 3) / 4 + DAYS_PER_YEAR * year;
 	if (day == 59 && !(year & 3)) {
 		nl_day = day;
 		month = 2;
 	} else {
-		nl_day = (year & 3) || day <= 59 ? day : day - 1;
+		nl_day = (year & 3) || day <= FEB28 ? day : day - 1;
 		for (month = 0; month < 12; month++)
 			if (day_n[month] > nl_day)
 				break;
 	}
 
 	century = 19;
+	/* account for 21st century and beyond - should
+	 * work so long as Unix epoch accurrately represented in
+	 * long - though bcd will fail in 101st century */
 	if (year > 19)
-		century = 20;
+		century += 1 + (year - 20)/100;
 
-	bh[z + VMUFAT_DIR_CENT] = bin2bcd(century);
-	u8year = year + 80;
+	bh[index_to_dir + VMUFAT_DIR_CENT] = bin2bcd(century);
+	u8year = year + 80; /* account for Unix epoch start */
 	if (u8year > 99)
 		u8year = u8year - 100;
 
-	bh[z + VMUFAT_DIR_YEAR] = bin2bcd(u8year);
-	bh[z + VMUFAT_DIR_MONTH] = bin2bcd(month);
-	bh[z + VMUFAT_DIR_DAY] =
+	bh[index_to_dir + VMUFAT_DIR_YEAR] = bin2bcd(u8year);
+	bh[index_to_dir + VMUFAT_DIR_MONTH] = bin2bcd(month);
+	bh[index_to_dir + VMUFAT_DIR_DAY] =
 	    bin2bcd(day - day_n[month - 1] + 1);
-	bh[z + VMUFAT_DIR_HOUR] =
-	    bin2bcd((unix_date / 3600) % 24);
-	bh[z + VMUFAT_DIR_MIN] = bin2bcd((unix_date / 60) % 60);
-	bh[z + VMUFAT_DIR_SEC] = bin2bcd(unix_date % 60);
+	bh[index_to_dir + VMUFAT_DIR_HOUR] =
+	    bin2bcd((unix_date / SECONDS_PER_HOUR) % HOURS_PER_DAY);
+	bh[index_to_dir + VMUFAT_DIR_MIN] = bin2bcd((unix_date / SIXTY_MINS_OR_SECS)
+		 % SIXTY_MINS_OR_SECS);
+	bh[index_to_dir + VMUFAT_DIR_SEC] = bin2bcd(unix_date % SIXTY_MINS_OR_SECS);
 	return unix_date;
 }
 
@@ -740,12 +744,19 @@ static int vmufat_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return 0;
 }
 
+/* Remove inode from memory */
+static void vmufat_evict_inode(struct inode *in)
+{
+	truncate_inode_pages(&in->i_data, 0);
+	end_writeback(in);
+}
+
 /*
  * Delete inode by marking space as free in FAT
  * no need to waste time and effort by actually
  * wiping underlying data on media
  */
-static void vmufat_evict_inode(struct inode *in)
+static void vmufat_remove_inode(struct inode *in)
 {
 	struct buffer_head *bh, *bh_old;
 	struct super_block *sb;
@@ -758,7 +769,7 @@ static void vmufat_evict_inode(struct inode *in)
 	sb = in->i_sb;
 	vmudetails = sb->s_fs_info;
 	if (in->i_ino > vmudetails->fat_len * sb->s_blocksize / 2) {
-		printk(KERN_ERR "vmufat: attempting to delete"
+		printk(KERN_ERR "VMUFAT: attempting to delete"
 			"inode beyond device size");
 		return;
 	}
@@ -855,12 +866,12 @@ static void vmufat_evict_inode(struct inode *in)
 			break;
 		}
 	}
-	end_writeback(in);
+	vmufat_evict_inode(in);
 	brelse(bh);
 	return;
 
 failure:
-	printk(KERN_ERR "vmufat: Failure to read device,"
+	printk(KERN_ERR "VMUFAT: Failure to read volume,"
 		" could not delete inode - filesystem may be damaged\n");
 	return;
 }
@@ -878,7 +889,7 @@ static int vmufat_unlink(struct inode *dir, struct dentry *dentry)
 	in = dentry->d_inode;
 	if (!in)
 		return -EIO;
-	vmufat_evict_inode(in);
+	vmufat_remove_inode(in);
 	return 0;
 }
 
@@ -937,8 +948,8 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	if (inode->i_ino == 0) {
 		exeblk = vmufat_get_fat(sb, finblk + 1);
 		if (exeblk != FAT_UNALLOCATED) {
-			printk(KERN_WARNING "Cannot allocate linear space "
-				"needed for executible\n");
+			printk(KERN_WARNING "VMUFAT: Cannot allocate linear "
+				"space needed for executible\n");
 			error = -ENOSPC;
 			goto out;
 		}
@@ -1119,6 +1130,11 @@ static int vmufat_fill_super(struct super_block *sb,
 
 	sb_set_blocksize(sb, VMU_BLK_SZ);
 
+	/* 
+	 * Hardware VMUs are 256 blocks in size but
+	 * the specification allows for other sizes so
+	 * we search through sizes
+	 */
 	for (test_sz = VMUFAT_MIN_BLK; test_sz < VMUFAT_MAX_BLK;
 				test_sz = test_sz * 2) {
 		bh = vmufat_sb_bread(sb, test_sz - 1);
@@ -1131,7 +1147,7 @@ static int vmufat_fill_super(struct super_block *sb,
 		brelse(bh);
 		if (test_sz == VMUFAT_MAX_BLK) {	/* failed */
 			printk(KERN_ERR
-				"vmufat: attempted to mount corrupted vmufat"
+				"VMUFAT: attempted to mount corrupted vmufat"
 				" or non-vmufat volume as vmufat\n");
 			goto out;
 		}
@@ -1145,10 +1161,14 @@ static int vmufat_fill_super(struct super_block *sb,
 
 	/* user blocks */
 	vmudata->sb_bnum = test_sz - 1;
-	vmudata->fat_bnum = le16_to_cpu(((u16 *) bh->b_data)[0x46 / 2]);
-	vmudata->fat_len = le16_to_cpu(((u16 *) bh->b_data)[0x48 / 2]);
-	vmudata->dir_bnum = le16_to_cpu(((u16 *) bh->b_data)[0x4a / 2]);
-	vmudata->dir_len = le16_to_cpu(((u16 *) bh->b_data)[0x4c / 2]);
+	vmudata->fat_bnum =
+		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_FAT]);
+	vmudata->fat_len =
+		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_FATLEN]);
+	vmudata->dir_bnum =
+		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_DIR]);
+	vmudata->dir_len =
+		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_DIRLEN]);
 	/* return the true number of user available blocks - VMUs
  	* return a neat 200 and ignore 40 blocks of usable space -
  	* we get round that in a hardware neutral way */
@@ -1161,12 +1181,13 @@ static int vmufat_fill_super(struct super_block *sb,
 
 	root_i = vmufat_get_inode(sb, vmudata->sb_bnum);
 	if (!root_i) {
-		printk(KERN_ERR "vmufat: get root inode failed\n");
+		printk(KERN_ERR "VMUFAT: get root inode failed\n");
 		ret = -ENOMEM;
 		goto freevmudata_out;
 	}
 	if (IS_ERR(root_i)) {
-		printk(KERN_ERR "vmufat: get root inode failed - error 0x%lX\n",
+		printk(KERN_ERR "VMUFAT: get root"
+			" inode failed - error 0x%lX\n",
 			PTR_ERR(root_i));
 		ret = PTR_ERR(root_i);
 		goto freevmudata_out;
@@ -1191,7 +1212,8 @@ out:
 
 }
 
-static const struct address_space_operations vmufat_address_space_operations = {
+static const struct address_space_operations
+		vmufat_address_space_operations = {
 	.readpage =	vmufat_readpage,
 	.writepage =	vmufat_writepage,
 	.write_begin =	vmufat_write_begin,
