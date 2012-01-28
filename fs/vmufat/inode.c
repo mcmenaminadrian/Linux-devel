@@ -16,11 +16,11 @@
 #include "vmufat.h"
 
 static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
-	struct nameidata *nd)
+	struct nameidata *ignored)
 {
-	struct super_block *sb;
+	struct super_block *superbl;
 	struct memcard *vmudetails;
-	struct buffer_head *bh;
+	struct buffer_head *bufhead;
 	struct inode *ino;
 	char name[VMUFAT_NAMELEN];
 	long blck_read;
@@ -31,29 +31,30 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 		goto out;
 	}
 
-	sb = in->i_sb;
-	vmudetails = sb->s_fs_info;
+	superbl = in->i_sb;
+	vmudetails = superbl->s_fs_info;
 	blck_read = vmudetails->dir_bnum;
 
-	bh = vmufat_sb_bread(sb, blck_read);
-	if (!bh) {
+	bufhead = vmufat_sb_bread(superbl, blck_read);
+	if (!bufhead) {
 		error = -EIO;
 		goto out;
 	}
 
 	do {
 		/* Have we got a file? */
-		if (bh->b_data[vmufat_index(fno)] == 0)
+		if (bufhead->b_data[vmufat_index(fno)] == 0)
 			goto next;
 
 		/* get file name */
 		memcpy(name,
-		       bh->b_data + 4 + vmufat_index(fno), VMUFAT_NAMELEN);
+			bufhead->b_data + 4 + vmufat_index(fno),
+			VMUFAT_NAMELEN);
 		/* do names match ?*/
 		if (memcmp(dent->d_name.name, name, dent->d_name.len) == 0) {
 			/* read the inode number from the directory */
-			ino = vmufat_get_inode(sb,
-				le16_to_cpu(((u16 *) bh->b_data)
+			ino = vmufat_get_inode(superbl,
+				le16_to_cpu(((u16 *) bufhead->b_data)
 					[1 + vmufat_index_16(fno)]));
 			if (!ino) {
 				error = -EACCES;
@@ -79,9 +80,9 @@ next:
 				d_add(dent, NULL);
 				break;
 			}
-			brelse(bh);
-			bh = vmufat_sb_bread(sb, blck_read);
-			if (!bh) {
+			brelse(bufhead);
+			bufhead = vmufat_sb_bread(superbl, blck_read);
+			if (!bufhead) {
 				error = -EIO;
 				goto out;
 			}
@@ -89,32 +90,44 @@ next:
 	} while (1);
 
 release_bh:
-	brelse(bh);
+	brelse(bufhead);
 out:
 	return ERR_PTR(error);
 }
 
 /*
- * Find a free block in the FAT and mark it
- * as the end of a file
+ * Find a free block in the FAT
  */
-static int vmufat_find_free(struct super_block *sb)
+static int vmufat_find_free(struct super_block *superbl)
 {
-	struct memcard *vmudetails = sb->s_fs_info;
-	int found = 0, cnt, fatcnt, error;
+	struct memcard *vmudetails = superbl->s_fs_info;
+	int found = 0, cnt, fatcnt, error, index_to_fat;
 	__le16 fatdata;
 	struct buffer_head *bh_fat;
+
 	for (fatcnt = vmudetails->fat_bnum;
 		fatcnt > vmudetails->fat_bnum - vmudetails->fat_len;
 		fatcnt--) {
-		bh_fat = vmufat_sb_bread(sb, fatcnt);
+		bh_fat = vmufat_sb_bread(superbl, fatcnt);
 		if (!bh_fat) {
 			error = -EIO;
 			goto fail;
 		}
+		/* Specification allows for more than one FAT block
+		 * but need to careful we do not over-write root
+		 * block which may be marked as unallocated on new
+		 * VMU device
+		 */
+	
+		if (unlikely(fatcnt < vmudetails->fat_bnum))
+			index_to_fat = VMU_BLK_SZ / 2 - 1;
+		else
+			index_to_fat =
+				vmudetails->fat_bnum - vmudetails->fat_len;
 
-		for (cnt = VMU_BLK_SZ / 2 - 1; cnt > 0; cnt--) {
-			fatdata = le16_to_cpu(((u16 *) bh_fat->b_data)[cnt]);
+		for (cnt = index_to_fat; cnt > 0; cnt--) {
+			fatdata =
+				le16_to_cpu(((u16 *) bh_fat->b_data)[cnt]);
 			if (fatdata == FAT_UNALLOCATED) {
 				found = 1;
 				goto out_of_loop;
@@ -135,10 +148,10 @@ fail:
 }
 
 /* read the FAT for a given block */
-static u16 vmufat_get_fat(struct super_block *sb, long block)
+static u16 vmufat_get_fat(struct super_block *superbl, long block)
 {
-	struct memcard *vmudetails = sb->s_fs_info;
-	struct buffer_head *bh;
+	struct memcard *vmudetails = superbl->s_fs_info;
+	struct buffer_head *bufhead;
 	int offset;
 	u16 block_content;
 	/* which block in the FAT */
@@ -146,25 +159,24 @@ static u16 vmufat_get_fat(struct super_block *sb, long block)
 	if (offset >= vmudetails->fat_len)
 		return FAT_ERROR;
 
-	bh = vmufat_sb_bread(sb, offset + 1 +
+	bufhead = vmufat_sb_bread(superbl, offset + 1 +
 		vmudetails->fat_bnum - vmudetails->fat_len);
-	if (!bh)
+	if (!bufhead)
 		return FAT_ERROR;
 	/* look inside the block */
-	block_content = le16_to_cpu(((u16 *)bh->b_data)
+	block_content = le16_to_cpu(((u16 *)bufhead->b_data)
 		[block % (VMU_BLK_SZ / 2)]);
-	put_bh(bh);
+	put_bh(bufhead);
 	return block_content;
 }
 
 /* set the FAT for a given block */
-static int vmufat_set_fat(struct super_block *sb, long block, u16 set)
+static int vmufat_set_fat(struct super_block *sb, long block, u16 data_to_set)
 {
 	struct memcard *vmudetails = sb->s_fs_info;
 	struct buffer_head *bh;
 	int offset;
-	__le16 leset = cpu_to_le16(set);
-
+	__le16 leset = cpu_to_le16(data_to_set);
 	offset = block / (VMU_BLK_SZ / 2);
 	if (offset >= vmudetails->fat_len)
 		return -EINVAL;
@@ -185,64 +197,63 @@ static int vmufat_set_fat(struct super_block *sb, long block, u16 set)
  * in the appropriate part of the 
  * directory entry
  */
-static unsigned long vmufat_save_bcd(char *bh, int index_to_dir)
+static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 {
-	unsigned char day, year, century, nl_day, month;
+	long years, days;
+	unsigned char bcd_century, nl_day, bcd_month;
 	unsigned char u8year;
-	unsigned long unix_date = CURRENT_TIME.tv_sec;
+	__kernel_time_t unix_date = in->i_mtime.tv_sec;
 
-	day = unix_date / SECONDS_PER_DAY - 3652;
-	year = day / DAYS_PER_YEAR;
+	/* Unix epoch beings 1/1/1970, vmufat date stamps begin 1/1/1980 */
+	days = unix_date / SECONDS_PER_DAY - 3652;
+	years = days / DAYS_PER_YEAR;
 
-	if ((year + 3) / 4 + DAYS_PER_YEAR * year > day)
-		year--;
+	if ((years + 3) / 4 + DAYS_PER_YEAR * years > days)
+		years--;
 
-	day -= (year + 3) / 4 + DAYS_PER_YEAR * year;
-	if (day == 59 && !(year & 3)) {
-		nl_day = day;
-		month = 2;
+	days -= (years + 3) / 4 + DAYS_PER_YEAR * years;
+	if (days == 59 && !(years & 3)) {
+		nl_day = days;
+		bcd_month = 2;
 	} else {
-		nl_day = (year & 3) || day <= FEB28 ? day : day - 1;
-		for (month = 0; month < 12; month++)
-			if (day_n[month] > nl_day)
+		nl_day = (years & 3) || days <= FEB28 ? days : days - 1;
+		for (bcd_month = 0; bcd_month < 12; bcd_month++)
+			if (day_n[bcd_month] > nl_day)
 				break;
 	}
 
-	century = 19;
-	/* account for 21st century and beyond - should
-	 * work so long as Unix epoch accurrately represented in
-	 * long - though bcd will fail in 101st century */
-	if (year > 19)
-		century += 1 + (year - 20)/100;
+	bcd_century = 19;
+	/* TODO: accounts for 21st century but will fail in 2100 
+	 	 because of leap days */
+	if (years > 19)
+		bcd_century += 1 + (years - 20)/100;
 
-	bh[index_to_dir + VMUFAT_DIR_CENT] = bin2bcd(century);
-	u8year = year + 80; /* account for Unix epoch start */
+	bh[index_to_dir + VMUFAT_DIR_CENT] = bin2bcd(bcd_century);
+	u8year = years + 80; /* account for epoch start */
 	if (u8year > 99)
 		u8year = u8year - 100;
 
 	bh[index_to_dir + VMUFAT_DIR_YEAR] = bin2bcd(u8year);
-	bh[index_to_dir + VMUFAT_DIR_MONTH] = bin2bcd(month);
+	bh[index_to_dir + VMUFAT_DIR_MONTH] = bin2bcd(bcd_month);
 	bh[index_to_dir + VMUFAT_DIR_DAY] =
-	    bin2bcd(day - day_n[month - 1] + 1);
+	    bin2bcd(days - day_n[bcd_month - 1] + 1);
 	bh[index_to_dir + VMUFAT_DIR_HOUR] =
 	    bin2bcd((unix_date / SECONDS_PER_HOUR) % HOURS_PER_DAY);
 	bh[index_to_dir + VMUFAT_DIR_MIN] = bin2bcd((unix_date / SIXTY_MINS_OR_SECS)
 		 % SIXTY_MINS_OR_SECS);
 	bh[index_to_dir + VMUFAT_DIR_SEC] = bin2bcd(unix_date % SIXTY_MINS_OR_SECS);
-	return unix_date;
 }
 
 static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		int imode, struct nameidata *nd)
 {
 	/* Create an inode */
-	int y, z, error = 0, q;
+	int y, z, error = 0, freeblock;
 	long blck_read;
 	struct inode *inode;
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	struct buffer_head *bh_fat = NULL, *bh;
-	unsigned long unix_date;
 
 	if (de->d_name.len > VMUFAT_NAMELEN)
 		return -ENAMETOOLONG;
@@ -268,18 +279,18 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 			error = -ENOSPC;
 			goto clean_inode;
 		}
-		q = 0;
+		freeblock = 0;
 	} else {
 		/* look for a free block */
-		q = vmufat_find_free(sb);
-		if (q < 0) {
-			error = q;
+		freeblock = vmufat_find_free(sb);
+		if (freeblock < 0) {
+			error = freeblock;
 			goto clean_inode;
 		}
-		inode->i_ino = q;
+		inode->i_ino = freeblock;
 	}
 	/* mark as single block file - may grow later */
-	error = vmufat_set_fat(sb, q, FAT_FILE_END);
+	error = vmufat_set_fat(sb, freeblock, FAT_FILE_END);
 	if (error)
 		goto clean_inode;
 
@@ -344,12 +355,10 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		de->d_name.len);
 
 	/* BCD timestamp it */
-	unix_date = vmufat_save_bcd(bh->b_data, z);
+	vmufat_save_bcd(inode, bh->b_data, z);
 
 	((u16 *) bh->b_data)[z / 2 + 0x0C] =
 	    cpu_to_le16(inode->i_blocks);
-
-	inode->i_mtime.tv_sec = unix_date;
 	mark_buffer_dirty(bh);
 	brelse(bh);
 
@@ -362,7 +371,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	return error;
 
 clean_fat:
-	((u16 *)bh_fat->b_data)[q] = cpu_to_le16(FAT_UNALLOCATED);
+	((u16 *)bh_fat->b_data)[freeblock] = cpu_to_le16(FAT_UNALLOCATED);
 	mark_buffer_dirty(bh_fat);
 	brelse(bh_fat);
 clean_inode:
@@ -684,34 +693,34 @@ static void vmufat_put_super(struct super_block *sb)
 	kfree(sb->s_fs_info);
 }
 
-static int vmufat_scan(struct super_block *sb, struct kstatfs *buf)
+static int vmufat_scan(struct super_block *superbl, struct kstatfs *kstatbuf)
 {
 	int error = 0;
 	int free = 0;
-	int x;
+	int index;
 	u16 fatdata;
 	struct buffer_head *bh_fat;
-	struct memcard *vmudetails = sb->s_fs_info;
+	struct memcard *vmudetails = superbl->s_fs_info;
 	long nextblock;
 
 	/* Look through the FAT */
 	nextblock = vmudetails->fat_bnum + vmudetails->fat_len - 1;
-	x = sb->s_blocksize;
-	bh_fat = vmufat_sb_bread(sb, nextblock);
+	index = superbl->s_blocksize;
+	bh_fat = vmufat_sb_bread(superbl, nextblock);
 	if (!bh_fat) {
 		error = -EIO;
 		goto out;
 	}
 
 	do {
-		fatdata = le16_to_cpu(((u16 *) bh_fat->b_data)[x]);
+		fatdata = le16_to_cpu(((u16 *) bh_fat->b_data)[index]);
 		if (fatdata == FAT_UNALLOCATED)
 			free++;
-		if (--x < 0) {
+		if (--index < 0) {
 			brelse(bh_fat);
 			if (--nextblock >= vmudetails->fat_bnum) {
-				x = sb->s_blocksize;
-				bh_fat = vmufat_sb_bread(sb, nextblock);
+				index = superbl->s_blocksize;
+				bh_fat = vmufat_sb_bread(superbl, nextblock);
 				if (!bh_fat) {
 					error = -EIO;
 					goto out;
@@ -729,17 +738,17 @@ out:
 	return error;
 }
 
-static int vmufat_statfs(struct dentry *dentry, struct kstatfs *buf)
+static int vmufat_statfs(struct dentry *dentry, struct kstatfs *kstatbuf)
 {
-	struct super_block *sb = dentry->d_sb;
+	struct super_block *superbl = dentry->d_sb;
 	int error;
 
-	error = vmufat_scan(sb, buf);
+	error = vmufat_scan(superbl, kstatbuf);
 	if (error)
 		return error;
-	buf->f_type = VMUFAT_MAGIC;
-	buf->f_bsize = sb->s_blocksize;
-	buf->f_namelen = VMUFAT_NAMELEN;
+	kstatbuf->f_type = VMUFAT_MAGIC;
+	kstatbuf->f_bsize = sb->s_blocksize;
+	kstatbuf->f_namelen = VMUFAT_NAMELEN;
 
 	return 0;
 }
@@ -747,7 +756,10 @@ static int vmufat_statfs(struct dentry *dentry, struct kstatfs *buf)
 /* Remove inode from memory */
 static void vmufat_evict_inode(struct inode *in)
 {
+	printk(KERN_ERR "Inode is at %i\n", in);
 	truncate_inode_pages(&in->i_data, 0);
+	invalidate_inode_buffers(in);
+	in->i_size = 0;
 	end_writeback(in);
 }
 
@@ -866,7 +878,7 @@ static void vmufat_remove_inode(struct inode *in)
 			break;
 		}
 	}
-	vmufat_evict_inode(in);
+//	vmufat_evict_inode(in);
 	brelse(bh);
 	return;
 
@@ -1008,7 +1020,6 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	struct buffer_head *bh;
 	unsigned long inode_num;
 	int y, blck_read, z;
-	unsigned long unix_date;
 	struct super_block *sb = in->i_sb;
 	struct memcard *vmudetails =
 	    ((struct memcard *) sb->s_fs_info);
@@ -1059,14 +1070,14 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	((__u16 *) bh->b_data)[z / 2 + 1] = cpu_to_le16(inode_num);
 
 	/* BCD timestamp it */
-	unix_date = vmufat_save_bcd(bh->b_data, z);
+	in->i_mtime = CURRENT_TIME;
+	vmufat_save_bcd(in, bh->b_data, z);
 
 	((__u16 *) bh->b_data)[z / 2 + 0x0C] = cpu_to_le16(in->i_blocks);
 	if (inode_num != 0)
 		((__u16 *) bh->b_data)[z / 2 + 0x0D] = 0;
 	else /* game */
 		((__u16 *) bh->b_data)[z / 2 + 0x0D] = cpu_to_le16(1);
-	in->i_mtime.tv_sec = unix_date;
 	mark_buffer_dirty(bh);
 	brelse(bh);
 	return 0;
