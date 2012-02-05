@@ -18,7 +18,7 @@
 static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	struct nameidata *ignored)
 {
-	struct super_block *superbl;
+	struct super_block *sb;
 	struct memcard *vmudetails;
 	struct buffer_head *bufhead;
 	struct inode *ino;
@@ -31,11 +31,11 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 		goto out;
 	}
 
-	superbl = in->i_sb;
-	vmudetails = superbl->s_fs_info;
+	sb = in->i_sb;
+	vmudetails = sb->s_fs_info;
 	blck_read = vmudetails->dir_bnum;
 
-	bufhead = vmufat_sb_bread(superbl, blck_read);
+	bufhead = vmufat_sb_bread(sb, blck_read);
 	if (!bufhead) {
 		error = -EIO;
 		goto out;
@@ -53,7 +53,7 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 		/* do names match ?*/
 		if (memcmp(dent->d_name.name, name, dent->d_name.len) == 0) {
 			/* read the inode number from the directory */
-			ino = vmufat_get_inode(superbl,
+			ino = vmufat_get_inode(sb,
 				le16_to_cpu(((u16 *) bufhead->b_data)
 					[1 + vmufat_index_16(fno)]));
 			if (!ino) {
@@ -81,7 +81,7 @@ next:
 				break;
 			}
 			brelse(bufhead);
-			bufhead = vmufat_sb_bread(superbl, blck_read);
+			bufhead = vmufat_sb_bread(sb, blck_read);
 			if (!bufhead) {
 				error = -EIO;
 				goto out;
@@ -98,9 +98,9 @@ out:
 /*
  * Find a free block in the FAT
  */
-static int vmufat_find_free(struct super_block *superbl)
+static int vmufat_find_free(struct super_block *sb)
 {
-	struct memcard *vmudetails = superbl->s_fs_info;
+	struct memcard *vmudetails = sb->s_fs_info;
 	int found = 0, cnt, fatcnt, error, index_to_fat;
 	__le16 fatdata;
 	struct buffer_head *bh_fat;
@@ -108,7 +108,7 @@ static int vmufat_find_free(struct super_block *superbl)
 	for (fatcnt = vmudetails->fat_bnum;
 		fatcnt > vmudetails->fat_bnum - vmudetails->fat_len;
 		fatcnt--) {
-		bh_fat = vmufat_sb_bread(superbl, fatcnt);
+		bh_fat = vmufat_sb_bread(sb, fatcnt);
 		if (!bh_fat) {
 			error = -EIO;
 			goto fail;
@@ -148,18 +148,18 @@ fail:
 }
 
 /* read the FAT for a given block */
-static u16 vmufat_get_fat(struct super_block *superbl, long block)
+static u16 vmufat_get_fat(struct super_block *sb, long block)
 {
-	struct memcard *vmudetails = superbl->s_fs_info;
+	struct memcard *vmudetails = sb->s_fs_info;
 	struct buffer_head *bufhead;
 	int offset;
 	u16 block_content;
 	/* which block in the FAT */
 	offset = block / (VMU_BLK_SZ / 2);
-	if (offset >= vmudetails->fat_len)
+	if (offset >= vmudetails->fat_len
 		return FAT_ERROR;
 
-	bufhead = vmufat_sb_bread(superbl, offset + 1 +
+	bufhead = vmufat_sb_bread(sb, offset + 1 +
 		vmudetails->fat_bnum - vmudetails->fat_len);
 	if (!bufhead)
 		return FAT_ERROR;
@@ -171,7 +171,8 @@ static u16 vmufat_get_fat(struct super_block *superbl, long block)
 }
 
 /* set the FAT for a given block */
-static int vmufat_set_fat(struct super_block *sb, long block, u16 data_to_set)
+static int vmufat_set_fat(struct super_block *sb, long block,
+		u16 data_to_set)
 {
 	struct memcard *vmudetails = sb->s_fs_info;
 	struct buffer_head *bh;
@@ -693,20 +694,20 @@ static void vmufat_put_super(struct super_block *sb)
 	kfree(sb->s_fs_info);
 }
 
-static int vmufat_scan(struct super_block *superbl, struct kstatfs *kstatbuf)
+static int vmufat_scan(struct super_block *sb, struct kstatfs *kstatbuf)
 {
 	int error = 0;
 	int free = 0;
 	int index;
 	u16 fatdata;
 	struct buffer_head *bh_fat;
-	struct memcard *vmudetails = superbl->s_fs_info;
+	struct memcard *vmudetails = sb->s_fs_info;
 	long nextblock;
 
 	/* Look through the FAT */
 	nextblock = vmudetails->fat_bnum + vmudetails->fat_len - 1;
-	index = superbl->s_blocksize;
-	bh_fat = vmufat_sb_bread(superbl, nextblock);
+	index = sb->s_blocksize;
+	bh_fat = vmufat_sb_bread(sb, nextblock);
 	if (!bh_fat) {
 		error = -EIO;
 		goto out;
@@ -719,8 +720,8 @@ static int vmufat_scan(struct super_block *superbl, struct kstatfs *kstatbuf)
 		if (--index < 0) {
 			brelse(bh_fat);
 			if (--nextblock >= vmudetails->fat_bnum) {
-				index = superbl->s_blocksize;
-				bh_fat = vmufat_sb_bread(superbl, nextblock);
+				index = sb->s_blocksize;
+				bh_fat = vmufat_sb_bread(sb, nextblock);
 				if (!bh_fat) {
 					error = -EIO;
 					goto out;
@@ -740,10 +741,10 @@ out:
 
 static int vmufat_statfs(struct dentry *dentry, struct kstatfs *kstatbuf)
 {
-	struct super_block *superbl = dentry->d_sb;
+	struct super_block *sb = dentry->d_sb;
 	int error;
 
-	error = vmufat_scan(superbl, kstatbuf);
+	error = vmufat_scan(sb, kstatbuf);
 	if (error)
 		return error;
 	kstatbuf->f_type = VMUFAT_MAGIC;
@@ -756,7 +757,6 @@ static int vmufat_statfs(struct dentry *dentry, struct kstatfs *kstatbuf)
 /* Remove inode from memory */
 static void vmufat_evict_inode(struct inode *in)
 {
-	printk(KERN_ERR "Inode is at %i\n", in);
 	truncate_inode_pages(&in->i_data, 0);
 	invalidate_inode_buffers(in);
 	in->i_size = 0;
