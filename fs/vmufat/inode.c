@@ -24,15 +24,22 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	struct inode *ino;
 	char name[VMUFAT_NAMELEN];
 	long blck_read;
-	int error = 0, fno = 0;
+	int error, file_num = 0;
 
 	if (dent->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
 		goto out;
 	}
 
+	error = -EINVAL;
+	if (!in || !dent)
+		goto out;
 	sb = in->i_sb;
+	if (!sb)
+		goto out;
 	vmudetails = sb->s_fs_info;
+	if (!vmudetails)
+		goto out;
 	blck_read = vmudetails->dir_bnum;
 
 	bufhead = vmufat_sb_bread(sb, blck_read);
@@ -40,22 +47,22 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 		error = -EIO;
 		goto out;
 	}
+	error = 0;
 
 	do {
 		/* Have we got a file? */
-		if (bufhead->b_data[vmufat_index(fno)] == 0)
+		if (bufhead->b_data[vmufat_index(file_num)] == 0)
 			goto next;
-
 		/* get file name */
 		memcpy(name,
-			bufhead->b_data + 4 + vmufat_index(fno),
+			bufhead->b_data + 4 + vmufat_index(file_num),
 			VMUFAT_NAMELEN);
 		/* do names match ?*/
 		if (memcmp(dent->d_name.name, name, dent->d_name.len) == 0) {
 			/* read the inode number from the directory */
 			ino = vmufat_get_inode(sb,
 				le16_to_cpu(((u16 *) bufhead->b_data)
-					[1 + vmufat_index_16(fno)]));
+					[1 + vmufat_index_16(file_num)]));
 			if (!ino) {
 				error = -EACCES;
 				goto release_bh;
@@ -70,10 +77,10 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 		}
 next:
 		/* did not match, so try the next file */
-		fno++;
+		file_num++;
 		/* do we need to move to the next block in the directory? */
-		if (fno >= DIR_ENT_PER_BLK) {
-			fno = 0;
+		if (file_num >= DIR_ENT_PER_BLK) {
+			file_num = 0;
 			blck_read--;
 			if (blck_read <=
 				vmudetails->dir_bnum - vmudetails->dir_len) {
@@ -150,23 +157,29 @@ fail:
 /* read the FAT for a given block */
 static u16 vmufat_get_fat(struct super_block *sb, long block)
 {
-	struct memcard *vmudetails = sb->s_fs_info;
 	struct buffer_head *bufhead;
 	int offset;
-	u16 block_content;
+	u16 block_content = FAT_ERROR;
+	struct memcard *vmudetails;
+	if (!sb)
+		goto out;
+	vmudetails = sb->s_fs_info;
+	if (!vmudetails)
+		goto out;
 	/* which block in the FAT */
 	offset = block / (VMU_BLK_SZ / 2);
-	if (offset >= vmudetails->fat_len
-		return FAT_ERROR;
+	if (offset >= vmudetails->fat_len)
+		goto out;
 
 	bufhead = vmufat_sb_bread(sb, offset + 1 +
 		vmudetails->fat_bnum - vmudetails->fat_len);
 	if (!bufhead)
-		return FAT_ERROR;
+		goto out;
 	/* look inside the block */
 	block_content = le16_to_cpu(((u16 *)bufhead->b_data)
 		[block % (VMU_BLK_SZ / 2)]);
 	put_bh(bufhead);
+out:
 	return block_content;
 }
 
@@ -174,22 +187,36 @@ static u16 vmufat_get_fat(struct super_block *sb, long block)
 static int vmufat_set_fat(struct super_block *sb, long block,
 		u16 data_to_set)
 {
-	struct memcard *vmudetails = sb->s_fs_info;
 	struct buffer_head *bh;
-	int offset;
+	int offset, error = 0;
+	struct memcard *vmudetails;
+
 	__le16 leset = cpu_to_le16(data_to_set);
+	if (!sb) {
+		error = -EINVAL;
+		goto out;
+	}
+	vmudetails = sb->s_fs_info;
+	if (!vmudetails) {
+		error = -EINVAL;
+		goto out;
+	}
 	offset = block / (VMU_BLK_SZ / 2);
-	if (offset >= vmudetails->fat_len)
-		return -EINVAL;
+	if (offset >= vmudetails->fat_len) {
+		error = -EINVAL;
+		goto out;
+	}
 
 	bh = vmufat_sb_bread(sb, offset + 1 +
 		vmudetails->fat_bnum - vmudetails->fat_len);
-	if (!bh)
-		return -EIO;
-
+	if (!bh) {
+		error = -EIO;
+		goto out;
+	}
 	((u16 *) bh->b_data)[block % (VMU_BLK_SZ / 2)] = leset;
 	mark_buffer_dirty(bh);
 	put_bh(bh);
+out:
 	return 0;
 }
 
@@ -204,6 +231,9 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	unsigned char bcd_century, nl_day, bcd_month;
 	unsigned char u8year;
 	__kernel_time_t unix_date = in->i_mtime.tv_sec;
+
+	if (!in || !bh)
+		return;
 
 	/* Unix epoch beings 1/1/1970, vmufat date stamps begin 1/1/1980 */
 	days = unix_date / SECONDS_PER_DAY - 3652;
@@ -246,7 +276,7 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 }
 
 static int vmufat_inode_create(struct inode *dir, struct dentry *de,
-		int imode, struct nameidata *nd)
+		umode_t imode, struct nameidata *nd)
 {
 	/* Create an inode */
 	int y, z, error = 0, freeblock;
@@ -256,11 +286,27 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	struct memcard *vmudetails;
 	struct buffer_head *bh_fat = NULL, *bh;
 
-	if (de->d_name.len > VMUFAT_NAMELEN)
-		return -ENAMETOOLONG;
+	if (!dir || !de) {
+		error = -EINVAL;
+		goto out;
+	}
+
+	if (de->d_name.len > VMUFAT_NAMELEN) {
+		error = -ENAMETOOLONG;
+		goto out;
+	}
 
 	sb = dir->i_sb;
+	if (!sb) {
+		error = -EINVAL;
+		goto out;
+	}
+
 	vmudetails = sb->s_fs_info;
+	if (!vmudetails) {
+		error = -EINVAL;
+		goto out;
+	}
 
 	inode = new_inode(sb);
 	if (!inode) {
@@ -523,17 +569,33 @@ static void vmufat_destroy_inode(struct inode *in)
 
 static int vmufat_list_blocks(struct inode *in)
 {
-	struct vmufat_inode *vi = VMUFAT_I(in);
-	struct super_block *sb = in->i_sb;
+	struct vmufat_inode *vi;
+	struct super_block *sb;
 	long nextblock;
-	long ino = in->i_ino;
+	long ino;
 	struct memcard *vmudetails;
-	int error;
+	int error = 0;
 	struct list_head *iter, *iter2;
 	struct vmufat_block_list *vbl, *nvbl;
 	u16 fatdata;
 
+	if (!in || in->i_sb || in->i_ino) {
+		error = -EINVAL;
+		goto out;
+	}
+	vi = VMUFAT_I(in);
+	if (!vi) {
+		error = -EINVAL;
+		goto out;
+	}
+	sb = in->i_sb;
+	ino = in->i_ino; 
+
 	vmudetails = sb->s_fs_info;
+	if (!vmudetails) {
+		error = -EINVAL;
+		goto out;
+	}
 	nextblock = ino;
 	if (nextblock == VMUFAT_ZEROBLOCK)
 		nextblock = 0;
@@ -569,8 +631,8 @@ static int vmufat_list_blocks(struct inode *in)
 			break;	/*end of file */
 		nextblock = fatdata;
 	} while (1);
-
-	return 0;
+out:
+	return error;
 
 unwind_out:
 	list_for_each_entry_safe(vbl, nvbl, &vi->blocks.b_list, b_list) {
@@ -690,50 +752,57 @@ failed:
 
 static void vmufat_put_super(struct super_block *sb)
 {
+	if (!sb)
+		return;
 	sb->s_dev = 0;
 	kfree(sb->s_fs_info);
 }
 
-static int vmufat_scan(struct super_block *sb, struct kstatfs *kstatbuf)
+
+static int vmufat_count_freeblocks(struct super_block *sb,
+					struct kstatfs *kstatbuf)
 {
 	int error = 0;
 	int free = 0;
-	int index;
+	int i, j, index = 0;
 	u16 fatdata;
 	struct buffer_head *bh_fat;
-	struct memcard *vmudetails = sb->s_fs_info;
-	long nextblock;
+	struct memcard *vmudetails;
+	long firstblock;
 
-	/* Look through the FAT */
-	nextblock = vmudetails->fat_bnum + vmudetails->fat_len - 1;
-	index = sb->s_blocksize;
-	bh_fat = vmufat_sb_bread(sb, nextblock);
-	if (!bh_fat) {
-		error = -EIO;
+	if (!sb || !kstatbuf) {
+		error = -EINVAL;
 		goto out;
 	}
 
-	do {
-		fatdata = le16_to_cpu(((u16 *) bh_fat->b_data)[index]);
-		if (fatdata == FAT_UNALLOCATED)
-			free++;
-		if (--index < 0) {
-			brelse(bh_fat);
-			if (--nextblock >= vmudetails->fat_bnum) {
-				index = sb->s_blocksize;
-				bh_fat = vmufat_sb_bread(sb, nextblock);
-				if (!bh_fat) {
-					error = -EIO;
-					goto out;
-				}
-			} else
-				break;
-		}
-	} while (1);
+	vmudetails = sb->s_fs_info;
+	if (!vmudetails) {
+		error = -EINVAL;
+		goto out;
+	}
 
-	buf->f_bfree = free;
-	buf->f_bavail = free;
-	buf->f_blocks = vmudetails->numblocks;
+	/* Look through the FAT */
+	firstblock = vmudetails->fat_bnum + vmudetails->fat_len - 1;
+	index = sb->s_blocksize;
+	for (i = firstblock; i >= vmudetails->fat_bnum; i--)
+	{
+		bh_fat = vmufat_sb_bread(sb, i);
+		if (!bh_fat) {
+			error = -EIO;
+			goto out;
+		}
+		for (j = index; j >= 0; j--)
+		{
+			fatdata = le16_to_cpu(((u16 *)bh_fat->b_data)[index]);
+			if (fatdata == FAT_UNALLOCATED)
+				free++;
+		}
+		brelse(bh_fat);
+	}
+
+	kstatbuf->f_bfree = free;
+	kstatbuf->f_bavail = free;
+	kstatbuf->f_blocks = vmudetails->numblocks;
 
 out:
 	return error;
@@ -741,22 +810,34 @@ out:
 
 static int vmufat_statfs(struct dentry *dentry, struct kstatfs *kstatbuf)
 {
-	struct super_block *sb = dentry->d_sb;
 	int error;
+	struct super_block *sb;
+	
+	if (!dentry || !kstatbuf) {
+		error = -EINVAL;
+		goto out;
+	}
 
-	error = vmufat_scan(sb, kstatbuf);
+	sb = dentry->d_sb;
+	if (!sb) {
+		error = -EINVAL;
+		goto out;
+	}
+	error = vmufat_count_freeblocks(sb, kstatbuf);
 	if (error)
-		return error;
+		goto out;
 	kstatbuf->f_type = VMUFAT_MAGIC;
 	kstatbuf->f_bsize = sb->s_blocksize;
 	kstatbuf->f_namelen = VMUFAT_NAMELEN;
-
-	return 0;
+out:
+	return error;
 }
 
 /* Remove inode from memory */
 static void vmufat_evict_inode(struct inode *in)
 {
+	if (!in)
+		return;
 	truncate_inode_pages(&in->i_data, 0);
 	invalidate_inode_buffers(in);
 	in->i_size = 0;
@@ -878,7 +959,6 @@ static void vmufat_remove_inode(struct inode *in)
 			break;
 		}
 	}
-//	vmufat_evict_inode(in);
 	brelse(bh);
 	return;
 
@@ -897,7 +977,8 @@ failure:
 static int vmufat_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct inode *in;
-
+	if (!dentry)
+		return -EINVAL;
 	in = dentry->d_inode;
 	if (!in)
 		return -EIO;
@@ -1086,6 +1167,8 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 static int check_sb_format(struct buffer_head *bh)
 {
 	u32 s_magic = VMUFAT_MAGIC;
+	if (!bh)
+		return -EINVAL;
 
 	if (!(((u32 *) bh->b_data)[0] == s_magic &&
 		((u32 *) bh->b_data)[1] == s_magic &&
@@ -1220,7 +1303,6 @@ freebh_out:
 	brelse(bh);
 out:
 	return ret;
-
 }
 
 static const struct address_space_operations
