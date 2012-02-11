@@ -26,14 +26,16 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	long blck_read;
 	int error, file_num = 0;
 
+	error = -EINVAL;
+
+	if (!dent || !in) 
+		goto out;
+
 	if (dent->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
 		goto out;
 	}
 
-	error = -EINVAL;
-	if (!in || !dent)
-		goto out;
 	sb = in->i_sb;
 	if (!sb)
 		goto out;
@@ -87,7 +89,7 @@ next:
 				d_add(dent, NULL);
 				break;
 			}
-			brelse(bufhead);
+			put_bh(bufhead);
 			bufhead = vmufat_sb_bread(sb, blck_read);
 			if (!bufhead) {
 				error = -EIO;
@@ -97,7 +99,7 @@ next:
 	} while (1);
 
 release_bh:
-	brelse(bufhead);
+	put_bh(bufhead);
 out:
 	return ERR_PTR(error);
 }
@@ -135,7 +137,7 @@ static int vmufat_find_free(struct super_block *sb)
 		for (cnt = index_to_fat; cnt > 0; cnt--) {
 			fatdata =
 				le16_to_cpu(((u16 *) bh_fat->b_data)[cnt]);
-			if (fatdata == FAT_UNALLOCATED) {
+			if (fatdata == VMUFAT_UNALLOCATED) {
 				found = 1;
 				goto out_of_loop;
 			}
@@ -159,7 +161,7 @@ static u16 vmufat_get_fat(struct super_block *sb, long block)
 {
 	struct buffer_head *bufhead;
 	int offset;
-	u16 block_content = FAT_ERROR;
+	u16 block_content = VMUFAT_ERROR;
 	struct memcard *vmudetails;
 	if (!sb)
 		goto out;
@@ -319,7 +321,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		/* Must be at start of volume */
 		inode->i_ino = VMUFAT_ZEROBLOCK;
 		/* But this already allocated? */
-		if (vmufat_get_fat(sb, 0) != FAT_UNALLOCATED) {
+		if (vmufat_get_fat(sb, 0) != VMUFAT_UNALLOCATED) {
 			printk(KERN_ERR
 				"VMUFAT: cannot write executible file to"
 				" filesystem - block 0 already allocated.\n");
@@ -337,7 +339,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		inode->i_ino = freeblock;
 	}
 	/* mark as single block file - may grow later */
-	error = vmufat_set_fat(sb, freeblock, FAT_FILE_END);
+	error = vmufat_set_fat(sb, freeblock, VMUFAT_FILE_END);
 	if (error)
 		goto clean_inode;
 
@@ -418,7 +420,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	return error;
 
 clean_fat:
-	((u16 *)bh_fat->b_data)[freeblock] = cpu_to_le16(FAT_UNALLOCATED);
+	((u16 *)bh_fat->b_data)[freeblock] = cpu_to_le16(VMUFAT_UNALLOCATED);
 	mark_buffer_dirty(bh_fat);
 	brelse(bh_fat);
 clean_inode:
@@ -529,6 +531,8 @@ out:
 static long vmufat_get_date(struct buffer_head *bh, int offset)
 {
 	int century, year, month, day, hour, minute, second;
+	if (!bh)
+		return -EINVAL;
 
 	century = bcd2bin(bh->b_data[offset++]);
 	year = bcd2bin(bh->b_data[offset++]);
@@ -555,9 +559,15 @@ static struct inode *vmufat_alloc_inode(struct super_block *sb)
 
 static void vmufat_destroy_inode(struct inode *in)
 {
-	struct vmufat_inode *vi = VMUFAT_I(in);
+	struct vmufat_inode *vi;
 	struct vmufat_block_list *vb;
 	struct list_head *iter, *iter2;
+	
+	if (!in)
+		return;
+	vi = VMUFAT_I(in);
+	if (!vi)
+		return;
 
 	list_for_each_safe(iter, iter2, &vi->blocks.b_list) {
 		vb = list_entry(iter, struct vmufat_block_list, b_list);
@@ -621,13 +631,13 @@ static int vmufat_list_blocks(struct inode *in)
 
 		/* Find next block in the FAT - if there is one */
 		fatdata = vmufat_get_fat(sb, nextblock);
-		if (fatdata == FAT_UNALLOCATED) {
+		if (fatdata == VMUFAT_UNALLOCATED) {
 			printk(KERN_WARNING "VMUFAT: FAT table appears to have"
 				" been corrupted.\n");
 			error = -EIO;
 			goto unwind_out;
 		}
-		if (fatdata == FAT_FILE_END)
+		if (fatdata == VMUFAT_FILE_END)
 			break;	/*end of file */
 		nextblock = fatdata;
 	} while (1);
@@ -646,11 +656,23 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 {
 	struct buffer_head *bh;
 	int error, blck_read, y, z;
-	struct inode *inode = iget_locked(sb, ino);
-	struct memcard *vmudetails = sb->s_fs_info;
-	long superblock_bno = vmudetails->sb_bnum;
+	struct inode *inode;
+	struct memcard *vmudetails;
+	long superblock_bno;
 
-	if (inode && (inode->i_state & I_NEW)) {
+	if (!sb || sb->s_fs_info) {
+		error = -EINVAL;
+		goto reterror;
+	}
+	vmudetails = sb->s_fs_info;
+	inode = iget_locked(sb, ino);
+	if (!inode) {
+		error = -EIO;
+		goto reterror;
+	}
+	superblock_bno = vmudetails->sb_bnum;
+
+	if (inode->i_state & I_NEW) {
 		inode->i_uid = 0;
 		inode->i_gid = 0;
 		inode->i_mode &= ~S_IFMT;
@@ -661,11 +683,10 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 				goto failed;
 			}
 			inode->i_ctime.tv_sec = inode->i_mtime.tv_sec =
-				vmufat_get_date(bh, 0x30);
+				vmufat_get_date(bh, VMUFAT_SB_DATEOFFSET);
 
 			/* Mark as a directory */
 			inode->i_mode = S_IFDIR | S_IRUGO | S_IXUGO;
-
 			inode->i_op = &vmufat_inode_operations;
 			inode->i_fop = &vmufat_file_dir_operations;
 		} else {
@@ -709,7 +730,8 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 			/* identified the correct directory entry */
 			z = vmufat_index(y);
 			inode->i_ctime.tv_sec = inode->i_mtime.tv_sec =
-				vmufat_get_date(bh, z + 0x10);
+				vmufat_get_date(bh,
+					z + VMUFAT_FILE_DATEOFFSET);
 
 			/* Execute if a game, write if not copy protected */
 			inode->i_mode &= ~(S_IWUGO | S_IXUGO);
@@ -742,11 +764,13 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 		inode->i_atime = CURRENT_TIME;
 		unlock_new_inode(inode);
 	}
-
+	brelse(bh);
 	return inode;
 
 failed:
 	iget_failed(inode);
+reterror:
+	brelse(bh); /* will not oops on null bh */
 	return ERR_PTR(error);
 }
 
@@ -794,7 +818,7 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 		for (j = index; j >= 0; j--)
 		{
 			fatdata = le16_to_cpu(((u16 *)bh_fat->b_data)[index]);
-			if (fatdata == FAT_UNALLOCATED)
+			if (fatdata == VMUFAT_UNALLOCATED)
 				free++;
 		}
 		brelse(bh_fat);
@@ -872,11 +896,11 @@ static void vmufat_remove_inode(struct inode *in)
 	nextblock = in->i_ino;
 	do {
 		fatdata = vmufat_get_fat(sb, nextblock);
-		if (fatdata == FAT_ERROR) 
+		if (fatdata == VMUFAT_ERROR) 
 			goto failure;
-		if (vmufat_set_fat(sb, nextblock, FAT_UNALLOCATED))
+		if (vmufat_set_fat(sb, nextblock, VMUFAT_UNALLOCATED))
 			goto failure;
-		if (fatdata == FAT_FILE_END)
+		if (fatdata == VMUFAT_FILE_END)
 			break;
 		nextblock = fatdata;
 	} while (1);
@@ -1040,7 +1064,7 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	/* Exec files have to be linear */
 	if (inode->i_ino == 0) {
 		exeblk = vmufat_get_fat(sb, finblk + 1);
-		if (exeblk != FAT_UNALLOCATED) {
+		if (exeblk != VMUFAT_UNALLOCATED) {
 			printk(KERN_WARNING "VMUFAT: Cannot allocate linear "
 				"space needed for executible\n");
 			error = -ENOSPC;
@@ -1057,7 +1081,7 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	error = vmufat_set_fat(sb, finblk, nxtblk);
 	if (error)
 		goto out;
-	error = vmufat_set_fat(sb, nxtblk, FAT_FILE_END);
+	error = vmufat_set_fat(sb, nxtblk, VMUFAT_FILE_END);
 	if (error)
 		goto out;
 	error = vmufat_list_blocks(inode);

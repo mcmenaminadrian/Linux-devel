@@ -3,28 +3,28 @@
 #define _VMUFAT_H_
 
 /* maximum length of file name */
-#define VMUFAT_NAMELEN 12
+#define VMUFAT_NAMELEN 		12
 
 /* GNU utils won't list files with inode num 0 */
-#define VMUFAT_ZEROBLOCK 32768
-#define VMU_BLK_SZ 512
+#define VMUFAT_ZEROBLOCK 	32768
+#define VMU_BLK_SZ 		512
 
 /* file allocation table markers */
-#define FAT_FILE_END	0xFFFA
-#define FAT_UNALLOCATED	0xFFFC
-#define FAT_ERROR	0xFFFF
+#define VMUFAT_FILE_END		0xFFFA
+#define VMUFAT_UNALLOCATED	0xFFFC
+#define VMUFAT_ERROR		0xFFFF
 
 /* parameters for possible VMU volume sizes */
-#define VMUFAT_MIN_BLK	0x80
-#define VMUFAT_MAX_BLK	0x1000
+#define VMUFAT_MIN_BLK		0x80
+#define VMUFAT_MAX_BLK		0x1000
 
 /* specifcations for directory entries */
-#define DIR_REC_LEN	0x20
-#define DIR_ENT_PER_BLK	0x10
+#define VMU_DIR_REC_LEN		0x20
+#define VMU_DIR_ENT_PER_BLK	0x10
 
 /* File types used in directory */
-#define VMU_GAME 0xCC
-#define VMU_DATA 0x33
+#define VMU_GAME 		0xCC
+#define VMU_DATA 		0x33
 
 /* filesystem locations marked in the root block */
 #define VMU_LOCATION_FAT	0x23
@@ -32,6 +32,10 @@
 #define VMU_LOCATION_DIR	0x25
 #define VMU_LOCATION_DIRLEN	0x26
 #define VMU_LOCATION_USRLEN	0x28 /* reports false figure */
+
+/* date offsets */
+#define VMUFAT_SB_DATEOFFSET	0x30
+#define VMUFAT_FILE_DATEOFFSET	0x10
 
 static struct kmem_cache *vmufat_inode_cachep;
 static struct kmem_cache *vmufat_blist_cachep;
