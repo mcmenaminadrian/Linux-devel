@@ -20,87 +20,62 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 {
 	struct super_block *sb;
 	struct memcard *vmudetails;
-	struct buffer_head *bufhead;
+	struct buffer_head *bufhead = NULL;
 	struct inode *ino;
 	char name[VMUFAT_NAMELEN];
-	long blck_read;
-	int error, file_num = 0;
-
-	error = -EINVAL;
+	int i, j, error = -EINVAL;
 
 	if (!dent || !in) 
 		goto out;
-
 	if (dent->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
 		goto out;
 	}
-
 	sb = in->i_sb;
 	if (!sb)
 		goto out;
 	vmudetails = sb->s_fs_info;
 	if (!vmudetails)
 		goto out;
-	blck_read = vmudetails->dir_bnum;
-
-	bufhead = vmufat_sb_bread(sb, blck_read);
-	if (!bufhead) {
-		error = -EIO;
-		goto out;
-	}
 	error = 0;
 
-	do {
-		/* Have we got a file? */
-		if (bufhead->b_data[vmufat_index(file_num)] == 0)
-			goto next;
-		/* get file name */
-		memcpy(name,
-			bufhead->b_data + 4 + vmufat_index(file_num),
-			VMUFAT_NAMELEN);
-		/* do names match ?*/
-		if (memcmp(dent->d_name.name, name, dent->d_name.len) == 0) {
-			/* read the inode number from the directory */
-			ino = vmufat_get_inode(sb,
-				le16_to_cpu(((u16 *) bufhead->b_data)
-					[1 + vmufat_index_16(file_num)]));
-			if (!ino) {
-				error = -EACCES;
-				goto release_bh;
-			}
-			if (IS_ERR(ino)) {
-				error = PTR_ERR(ino);
-				goto release_bh;
-			}
-			/* return the entry */
-			d_add(dent, ino);
-			goto release_bh;
+	for (i = vmudetails->dir_bnum;
+		i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
+	{
+		brelse(bufhead);
+		bufhead = vmufat_sb_bread(sb, i);
+		if (!bufhead) {
+			error = -EIO;
+			goto out;
 		}
-next:
-		/* did not match, so try the next file */
-		file_num++;
-		/* do we need to move to the next block in the directory? */
-		if (file_num >= DIR_ENT_PER_BLK) {
-			file_num = 0;
-			blck_read--;
-			if (blck_read <=
-				vmudetails->dir_bnum - vmudetails->dir_len) {
-				d_add(dent, NULL);
-				break;
-			}
-			put_bh(bufhead);
-			bufhead = vmufat_sb_bread(sb, blck_read);
-			if (!bufhead) {
-				error = -EIO;
+		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
+		{
+			if (bufhead->b_data[vmufat_index(j)] == 0)
+				continue; /* no file at this index */
+			/* get name and check for match */
+			memcpy(name,
+				bufhead->b_data + vmufat_index(j)
+				+ VMUFAT_NAME_OFFSET, VMUFAT_NAMELEN);
+			if (memcmp(dent->d_name.name, name,
+				dent->d_name.len) == 0) {
+				ino = vmufat_get_inode(sb,
+					le16_to_cpu(((u16 *) bufhead->b_data)
+					[vmufat_index_16(j)
+					+ VMUFAT_FIRSTBLOCK_OFFSET16]));
+				if (IS_ERR_OR_NULL(ino)) {
+					if (IS_ERR(ino))
+						error = PTR_ERR(ino);
+					else
+						error = -EACCES;
+					goto out;
+				}
+				d_add(dent, ino);
 				goto out;
 			}
 		}
-	} while (1);
-
-release_bh:
-	put_bh(bufhead);
+	}				
 out:
+	brelse(bufhead);
 	return ERR_PTR(error);
 }
 
@@ -299,16 +274,11 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	}
 
 	sb = dir->i_sb;
-	if (!sb) {
+	if (!sb || sb->s_fs_info) {
 		error = -EINVAL;
 		goto out;
 	}
-
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails) {
-		error = -EINVAL;
-		goto out;
-	}
 
 	inode = new_inode(sb);
 	if (!inode) {
@@ -363,8 +333,9 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		goto clean_inode;
 	}
 
-	for (y = 0; y < (vmudetails->dir_len * DIR_ENT_PER_BLK); y++) {
-		if ((y / DIR_ENT_PER_BLK) >
+	for (y = 0; y < vmudetails->dir_len * VMU_DIR_ENTRIES_PER_BLOCK; y++)
+	{
+		if (y / VMU_DIR_ENTRIES_PER_BLOCK >
 			(vmudetails->dir_bnum - blck_read)) {
 			brelse(bh);
 			blck_read--;
@@ -466,7 +437,7 @@ static int vmufat_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	}
 
 	/* trap reading beyond the end of the directory */
-	if ((i - 2) > (vmudetails->dir_len * DIR_ENT_PER_BLK)) {
+	if ((i - 2) > (vmudetails->dir_len * VMU_DIR_ENTRIES_PER_BLOCK)) {
 		error = -EINVAL;
 		goto release_bh;
 	}
@@ -479,7 +450,7 @@ static int vmufat_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	}
 
 	do {
-		if ((i - 2) / DIR_ENT_PER_BLK >
+		if ((i - 2) / VMU_DIR_ENTRIES_PER_BLOCK >
 			(vmudetails->dir_bnum - blck_read)) {
 			/* move to next block in directory */
 			blck_read--;
@@ -654,7 +625,7 @@ unwind_out:
 
 static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 {
-	struct buffer_head *bh;
+	struct buffer_head *bh = NULL;
 	int error, blck_read, y, z;
 	struct inode *inode;
 	struct memcard *vmudetails;
@@ -702,8 +673,8 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 
 			/* Scan through the directory to find matching file */
 			for (y = 0; y < vmudetails->numblocks; y++) {
-				if ((y / DIR_ENT_PER_BLK) >
-				    (vmudetails->dir_bnum - blck_read)) {
+				if (y / VMU_DIR_ENTRIES_PER_BLOCK >
+				    vmudetails->dir_bnum - blck_read) {
 					brelse(bh);
 					blck_read--;
 					bh = vmufat_sb_bread(sb, blck_read);
@@ -713,8 +684,8 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 					}
 				}
 				if (le16_to_cpu(((u16 *) bh->b_data)
-					[(y % DIR_ENT_PER_BLK) * 
-					DIR_REC_LEN / 2 + 0x01]) == ino)
+					[(y % VMU_DIR_ENTRIES_PER_BLOCK) * 
+					VMU_DIR_RECORD_LEN / 2 + 0x01]) == ino)
 					break;
 				}
 
@@ -913,8 +884,9 @@ static void vmufat_remove_inode(struct inode *in)
 	if (!bh)
 		goto failure;
 
-	for (y = 0; y < (vmudetails->dir_len * DIR_ENT_PER_BLK); y++) {
-		if ((y / DIR_ENT_PER_BLK) >
+	for (y = 0; y < vmudetails->dir_len * VMU_DIR_ENTRIES_PER_BLOCK; y++)
+	{
+		if ((y / VMU_DIR_ENTRIES_PER_BLOCK) >
 			(vmudetails->dir_bnum - blck_read)) {
 			brelse(bh);
 			blck_read--;
@@ -923,21 +895,23 @@ static void vmufat_remove_inode(struct inode *in)
 				goto failure;
 		}
 		if (le16_to_cpu(((u16 *) bh->b_data)
-			[(y % DIR_ENT_PER_BLK) * DIR_REC_LEN / 2 +
-			0x01]) == in->i_ino)
+			[vmufat_index_16(y) + VMUFAT_FIRSTBLOCK_OFFSET16])
+			== in->i_ino)
 			break;
 	}
 
 	/* Found directory entry - so NULL it now */
 	w = vmufat_index_16(y);
-	for (z = 0; z < DIR_REC_LEN / 2; z++)
+	for (z = 0; z < VMU_DIR_RECORD_LEN / 2; z++)
 		((u16 *) bh->b_data)[w + z] = 0;
 	mark_buffer_dirty(bh);
 	/* Replace it with another entry - if one exists */
 	x = y;
-	for (y = x + 1; y < (vmudetails->dir_len * DIR_ENT_PER_BLK); y++) {
-		if ((y / DIR_ENT_PER_BLK) >
-			(vmudetails->dir_bnum - blck_read)) {
+	for (y = x + 1; y < vmudetails->dir_len * VMU_DIR_ENTRIES_PER_BLOCK;
+		y++)
+	{
+		if (y / VMU_DIR_ENTRIES_PER_BLOCK >
+			vmudetails->dir_bnum - blck_read) {
 			brelse(bh);
 			blck_read--;
 			bh = vmufat_sb_bread(sb, blck_read);
@@ -953,12 +927,12 @@ static void vmufat_remove_inode(struct inode *in)
 
 			/* force read of correct block */
 			bh = vmufat_sb_bread(sb, vmudetails->dir_bnum -
-				y / DIR_ENT_PER_BLK);
+				y / VMU_DIR_ENTRIES_PER_BLOCK);
 			if (!bh)
 				goto failure;
 			bh_old =
 			    vmufat_sb_bread(sb, vmudetails->dir_bnum -
-				x / DIR_ENT_PER_BLK);
+				x / VMU_DIR_ENTRIES_PER_BLOCK);
 			if (!bh_old) {
 				brelse(bh);
 				goto failure;
@@ -970,14 +944,15 @@ static void vmufat_remove_inode(struct inode *in)
 			 */
 			w = vmufat_index_16(x);
 			v = vmufat_index_16(y);
-			for (z = 0; z < DIR_REC_LEN / 2; z++) {
+			for (z = 0; z < VMU_DIR_RECORD_LEN / 2; z++) {
 				((u16 *) bh_old->b_data)[w + z] =
 					((u16 *) bh->b_data)[v + z];
 				((u16 *) bh->b_data)[v + z] = 0;
 			}
 			mark_buffer_dirty(bh);
 			/* check if the same buffer */
-			if (x / DIR_ENT_PER_BLK != y / DIR_ENT_PER_BLK)
+			if (x / VMU_DIR_ENTRIES_PER_BLOCK
+				!= y / VMU_DIR_ENTRIES_PER_BLOCK)
 				mark_buffer_dirty(bh_old);
 			brelse(bh_old);
 			break;
@@ -1013,16 +988,23 @@ static int vmufat_unlink(struct inode *dir, struct dentry *dentry)
 static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	struct buffer_head *bh_result, int create)
 {
-	struct vmufat_inode *vin = VMUFAT_I(inode);
-	struct vmufat_block_list *vlist = &vin->blocks;
-	struct vmufat_block_list *vblk;
-	struct super_block *sb = inode->i_sb;
+	struct vmufat_inode *vin;
+	struct vmufat_block_list *vlist, *vblk;
+	struct super_block *sb;
 	int cural;
 	int finblk, nxtblk, exeblk;
 	struct list_head *iter;
 	sector_t cntdwn = iblock;
 	sector_t phys;
 	int error = -EINVAL;
+	
+	if (!inode || !inode->i_sb)
+		goto out;
+	vin = VMUFAT_I(inode);
+	if (!vin || !(&vin->blocks))
+		goto out;
+	vlist = &vin->blocks;
+	sb = inode->i_sb;
 
 	/* quick sanity check */
 	if (vin->nblcks <= 0)
