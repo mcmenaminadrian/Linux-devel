@@ -8,6 +8,7 @@
 /* GNU utils won't list files with inode num 0 */
 #define VMUFAT_ZEROBLOCK 		32768
 #define VMU_BLK_SZ 			512
+#define	VMU_BLK_SZ16			256
 
 /* file allocation table markers */
 #define VMUFAT_FILE_END			0xFFFA
@@ -82,6 +83,7 @@ struct memcard {
 	unsigned int dir_bnum;
 	unsigned int dir_len;
 	unsigned int numblocks;
+	struct semaphore vmu_sem;
 };
 
 struct vmufat_block_list {
