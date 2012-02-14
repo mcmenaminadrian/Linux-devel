@@ -860,6 +860,32 @@ static void vmufat_evict_inode(struct inode *in)
 	end_writeback(in);
 }
 
+static int vmufat_clean_fat(super_block *sb, int inum)
+{
+	int error = 0;
+	u16 fatword, nextword;
+	if (!sb) {
+		error = -EINVAL;
+		goto out;
+	}
+	nextword = inum;
+	do {
+		fatword = vmufat_get_fat(sb, nextword);
+		if (fatword == VMUFAT_ERROR) {
+			error = -EIO;
+			goto out;
+		}
+		error = vmufat_set_fat(sb, nextword, VMUFAT_UNALLOCATED);
+		if (error)
+			goto out;
+		if (fatword == VMUFAT_FILE_END)
+			goto out;
+		nextword = fatword;
+	} while(1);
+out:
+	return error;
+}
+
 /*
  * Delete inode by marking space as free in FAT
  * no need to waste time and effort by actually
@@ -867,10 +893,10 @@ static void vmufat_evict_inode(struct inode *in)
  */
 static void vmufat_remove_inode(struct inode *in)
 {
-	struct buffer_head *bh, *bh_old;
+	struct buffer_head *bh = NULL, *bh_old = NULL;
 	struct super_block *sb;
 	struct memcard *vmudetails;
-	int z, y, x, w, v, blck_read, i, j, k, startpt, found = 0;
+	int i, j, k, l, startpt, found = 0;
 	u16 nextblock, fatdata;
 
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
@@ -883,36 +909,17 @@ static void vmufat_remove_inode(struct inode *in)
 		return;
 	}
 
-	/* Seek start of file and wander through FAT
- 	 * Marking the blocks as unallocated */
-	nextblock = in->i_ino;
 	down_interruptible(&vmudetails->vmu_sem);
-	do {
-		fatdata = vmufat_get_fat(sb, nextblock);
-		if (fatdata == VMUFAT_ERROR) {
-			up(&vmudetails->vmu_sem);
-			goto failure;
-		}
-		if (vmufat_set_fat(sb, nextblock, VMUFAT_UNALLOCATED)) {
-			up(&vmudetails->vmu_sem);
-			goto failure;
-		}
-		if (fatdata == VMUFAT_FILE_END)
-			break;
-		nextblock = fatdata;
-	} while (1);
-	up(&vmudetails->vmu_sem);
+	if (vmufat_clean_fat(sb, in->i_ino)) {
+		up(&vmudetails->vmu_sem);
+		goto failure;
+	}
 
 	/* Now clean the directory entry
 	 * Have to wander through this
 	 * to find the appropriate entry */
-	blck_read = vmudetails->dir_bnum;
-	bh = vmufat_sb_bread(sb, blck_read);
-	if (!bh)
-		goto failure;
-
-	down_interruptible(&vmudetails->vmu_sem);
-	for (i = vmudetails->dir_bnum; i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
+	for (i = vmudetails->dir_bnum;
+		i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
 	{
 		brelse(bh);
 		bh = vmufat_sb_bread(sb, i);
@@ -926,7 +933,9 @@ static void vmufat_remove_inode(struct inode *in)
 				up(&vmudetails->vmu_sem);
 				goto failure;
 			}
-			if (le16_to_cpu(((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + VMUFAT_FIRSTBLOCK_OFFSET16]) == in->i_ino) {
+			if (le16_to_cpu(((u16 *) bh->b_data)
+				[j * VMU_DIR_RECORD_LEN16 +
+				VMUFAT_FIRSTBLOCK_OFFSET16]) == in->i_ino) {
 				found = 1;
 				goto found;
 			}
@@ -954,7 +963,8 @@ found:
 		}
 		for (k = startpt; k < VMU_DIR_ENTRIES_PER_BLOCK; k++)
 		{
-			if (((u16 *)bh_old->bdata)[k * VMU_DIR_RECORD_LEN16] == 0) {
+			if (((u16 *)bh_old->b_data)
+				[k * VMU_DIR_RECORD_LEN16] == 0) {
 				found = 1;
 				brelse(bh_old);
 				goto lastdirfound;
@@ -985,9 +995,10 @@ lastdirfound:
 		brelse(bh);
 		goto failure;
 	}
-	for (m = 0; m < VMU_DIR_RECORD_LEN; m++) {
-		bh->bdata[j * VMU_DIR_RECORD_LEN + m] = bh_old->bdata[k * VMU_DIR_RECORD_LEN + m];
-		bh_old->bdata[k * VMU_DIR_RECORD_LEN + m] = 0;
+	for (i = 0; i < VMU_DIR_RECORD_LEN; i++) {
+		bh->b_data[j * VMU_DIR_RECORD_LEN + i] =
+			bh_old->b_data[k * VMU_DIR_RECORD_LEN + i];
+		bh_old->b_data[k * VMU_DIR_RECORD_LEN + i] = 0;
 	}
 	mark_buffer_dirty(bh_old);
 	mark_buffer_dirty(bh);
