@@ -48,17 +48,19 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
 		{
-			if (bufhead->b_data[vmufat_index(j)] == 0)
-				continue; /* no file at this index */
+			if (bufhead->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
+				error = -ENOENT;
+				goto out;
+			}
 			/* get name and check for match */
 			memcpy(name,
-				bufhead->b_data + vmufat_index(j)
+				bufhead->b_data + j * VMU_DIR_RECORD_LEN
 				+ VMUFAT_NAME_OFFSET, VMUFAT_NAMELEN);
 			if (memcmp(dent->d_name.name, name,
 				dent->d_name.len) == 0) {
 				ino = vmufat_get_inode(sb,
 					le16_to_cpu(((u16 *) bufhead->b_data)
-					[vmufat_index_16(j)
+					[j * VMU_DIR_RECORD_LEN16
 					+ VMUFAT_FIRSTBLOCK_OFFSET16]));
 				if (IS_ERR_OR_NULL(ino)) {
 					if (IS_ERR(ino))
@@ -643,7 +645,8 @@ unwind_out:
 static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 {
 	struct buffer_head *bh = NULL;
-	int error, blck_read, y, z;
+	int error, blck_read, i, j, found = 0;
+	int offsetindir;
 	struct inode *inode;
 	struct memcard *vmudetails;
 	long superblock_bno;
@@ -689,48 +692,52 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 			inode->i_mode = S_IFREG;
 
 			/* Scan through the directory to find matching file */
-			for (y = 0; y < vmudetails->numblocks; y++) {
-				if (y / VMU_DIR_ENTRIES_PER_BLOCK >
-				    vmudetails->dir_bnum - blck_read) {
-					brelse(bh);
-					blck_read--;
-					bh = vmufat_sb_bread(sb, blck_read);
-					if (!bh) {
-						error = -EIO;
+			for (i = vmudetails->dir_bnum;
+				i > vmudetails->dir_bnum - vmudetails->dir_len;
+				i--)
+			{
+				brelse(bh);
+				bh = vmufat_sb_bread(sb, i);
+				if (!bh) {
+					error = -EIO;
+					goto failed;
+				}
+				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
+				{
+					if (((u16 *)bh->b_data)
+					[j * VMU_DIR_RECORD_LEN16] == 0) {
+						printk("VMUFAT:"
+							" file not found\n");
+						error = -ENOENT;
 						goto failed;
 					}
+					if le16_to_cpu(((u16 *) bh->b_data)
+					[j * VMU_DIR_RECORD_LEN16 +
+					VMUFAT_FIRSTBLOCK_OFFSET16] == ino) {
+						found = 1;
+						goto found;
+					}
 				}
-				if (le16_to_cpu(((u16 *) bh->b_data)
-					[(y % VMU_DIR_ENTRIES_PER_BLOCK) * 
-					VMU_DIR_RECORD_LEN / 2 + 0x01]) == ino)
-					break;
-				}
-
-				if (y >= vmudetails->numblocks) {
-					brelse(bh);
-					printk(KERN_INFO
-						"vmufat: could not find this "
-						"file on filesystem\n");
-				error = -ENOENT;
-				goto failed;
 			}
-
+found:
+			if (found == 0)
+				goto failed;
 			/* identified the correct directory entry */
-			z = vmufat_index(y);
+			offsetindir = j * VMU_DIR_RECORD_LEN;
 			inode->i_ctime.tv_sec = inode->i_mtime.tv_sec =
 				vmufat_get_date(bh,
-					z + VMUFAT_FILE_DATEOFFSET);
+					offsetindir + VMUFAT_FILE_DATEOFFSET);
 
 			/* Execute if a game, write if not copy protected */
 			inode->i_mode &= ~(S_IWUGO | S_IXUGO);
 			inode->i_mode |= S_IRUGO;
 
 			/* Mode - is it write protected? */
-			if ((((u8 *) bh->b_data)[0x01 + z] ==
+			if ((((u8 *) bh->b_data)[0x01 + offsetindir] ==
 			     0x00) & ~(sb->s_flags & MS_RDONLY))
 				inode->i_mode |= S_IWUGO;
 			/* Is file executible - ie a game */
-			if ((((u8 *) bh->b_data)[z] ==
+			if ((((u8 *) bh->b_data)[offsetindir] ==
 			     0xcc) & ~(sb->s_flags & MS_NOEXEC))
 				inode->i_mode |= S_IXUGO;
 
@@ -738,7 +745,7 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 
 			inode->i_blocks =
 			    le16_to_cpu(((u16 *) bh->b_data)
-				[vmufat_index_16(y) + 0x0C]);
+				[offsetindir / 2 + 0x0C]);
 			inode->i_size = inode->i_blocks * sb->s_blocksize;
 
 			inode->i_mapping->a_ops =
@@ -777,7 +784,6 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 	int error = 0;
 	int free = 0;
 	int i, j, index = 0;
-	u16 fatdata;
 	struct buffer_head *bh_fat;
 	struct memcard *vmudetails;
 	long firstblock;
@@ -795,7 +801,7 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 
 	/* Look through the FAT */
 	firstblock = vmudetails->fat_bnum + vmudetails->fat_len - 1;
-	index = sb->s_blocksize;
+	index = sb->s_blocksize / 2;
 	for (i = firstblock; i >= vmudetails->fat_bnum; i--)
 	{
 		bh_fat = vmufat_sb_bread(sb, i);
@@ -804,11 +810,9 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 			goto out;
 		}
 		for (j = index; j >= 0; j--)
-		{
-			fatdata = le16_to_cpu(((u16 *)bh_fat->b_data)[index]);
-			if (fatdata == VMUFAT_UNALLOCATED)
+			if (le16_to_cpu(((u16 *)bh_fat->b_data)[index]) ==
+				VMUFAT_UNALLOCATED)
 				free++;
-		}
 		brelse(bh_fat);
 	}
 

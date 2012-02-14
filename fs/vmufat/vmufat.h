@@ -21,6 +21,7 @@
 
 /* specifcations for directory entries */
 #define VMU_DIR_RECORD_LEN		0x20
+#define VMU_DIR_RECORD_LEN16		0x10
 #define VMU_DIR_ENTRIES_PER_BLOCK	0x10
 #define VMUFAT_NAME_OFFSET		0x04
 #define VMUFAT_FIRSTBLOCK_OFFSET16	0x01
