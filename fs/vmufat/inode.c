@@ -870,7 +870,7 @@ static void vmufat_remove_inode(struct inode *in)
 	struct buffer_head *bh, *bh_old;
 	struct super_block *sb;
 	struct memcard *vmudetails;
-	int z, y, x, w, v, blck_read;
+	int z, y, x, w, v, blck_read, i, j, k, startpt, found = 0;
 	u16 nextblock, fatdata;
 
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
@@ -911,86 +911,89 @@ static void vmufat_remove_inode(struct inode *in)
 	if (!bh)
 		goto failure;
 
-	for (y = 0; y < vmudetails->dir_len * VMU_DIR_ENTRIES_PER_BLOCK; y++)
+	down_interruptible(&vmudetails->vmu_sem);
+	for (i = vmudetails->dir_bnum; i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
 	{
-		if ((y / VMU_DIR_ENTRIES_PER_BLOCK) >
-			(vmudetails->dir_bnum - blck_read)) {
-			brelse(bh);
-			blck_read--;
-			bh = vmufat_sb_bread(sb, blck_read);
-			if (!bh)
-				goto failure;
+		brelse(bh);
+		bh = vmufat_sb_bread(sb, i);
+		if (!bh) {
+			up(&vmudetails->vmu_sem);
+			goto failure;
 		}
-		if (le16_to_cpu(((u16 *) bh->b_data)
-			[vmufat_index_16(y) + VMUFAT_FIRSTBLOCK_OFFSET16])
-			== in->i_ino)
-			break;
+		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
+		{
+			if (((u16*)bh->b_data)[j * VMU_DIR_RECORD_LEN16] == 0) {
+				up(&vmudetails->vmu_sem);
+				goto failure;
+			}
+			if (le16_to_cpu(((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + VMUFAT_FIRSTBLOCK_OFFSET16]) == in->i_ino) {
+				found = 1;
+				goto found;
+			}
+		}
+	}
+found:
+	if (found == 0) {
+		up(&vmudetails->vmu_sem);
+		goto failure;
 	}
 
 	/* Found directory entry - so NULL it now */
-	w = vmufat_index_16(y);
-	down_interruptible(&vmudetails->vmu_sem);
-	for (z = 0; z < VMU_DIR_RECORD_LEN / 2; z++)
-		((u16 *) bh->b_data)[w + z] = 0;
+	for (k = 0; k < VMU_DIR_RECORD_LEN; k++)
+		(bh->b_data)[j * VMU_DIR_RECORD_LEN + k] = 0;
 	mark_buffer_dirty(bh);
-	/* Replace it with another entry - if one exists */
-	x = y;
-	for (y = x + 1; y < vmudetails->dir_len * VMU_DIR_ENTRIES_PER_BLOCK;
-		y++)
+	/* Patch up directory, by moving up last file */
+	found = 0;
+	startpt = j + 1;
+	for (l = i; l > vmudetails->dir_bnum - vmudetails->dir_len; l--)
 	{
-		if (y / VMU_DIR_ENTRIES_PER_BLOCK >
-			vmudetails->dir_bnum - blck_read) {
-			brelse(bh);
-			blck_read--;
-			bh = vmufat_sb_bread(sb, blck_read);
-			if (!bh) {
-				up(&vmudetails->vmu_sem);
-				return;
+		bh_old = vmufat_sb_bread(sb, l);
+		if (!bh_old) {
+			up(&vmudetails->vmu_sem);
+			goto failure;
+		}
+		for (k = startpt; k < VMU_DIR_ENTRIES_PER_BLOCK; k++)
+		{
+			if (((u16 *)bh_old->bdata)[k * VMU_DIR_RECORD_LEN16] == 0) {
+				found = 1;
+				brelse(bh_old);
+				goto lastdirfound;
 			}
 		}
-		/* look for the end of entries in the directory */
-		if (bh->b_data[vmufat_index(y)] == 0) {
-			y--;
-			if (y == x)
-				break;	/* At the end in any case */
-			brelse(bh);
-
-			/* force read of correct block */
-			bh = vmufat_sb_bread(sb, vmudetails->dir_bnum -
-				y / VMU_DIR_ENTRIES_PER_BLOCK);
-			if (!bh) {
-				up(&vmudetails->vmu_sem);
-				goto failure;
-			}
-			bh_old =
-			    vmufat_sb_bread(sb, vmudetails->dir_bnum -
-				x / VMU_DIR_ENTRIES_PER_BLOCK);
-			if (!bh_old) {
-				up(&vmudetails->vmu_sem);
-				brelse(bh);
-				goto failure;
-			}
-
-			/*
- 			 * Copy final directory entry into space created
-			 * by the deletion of the inode
-			 */
-			w = vmufat_index_16(x);
-			v = vmufat_index_16(y);
-			for (z = 0; z < VMU_DIR_RECORD_LEN / 2; z++) {
-				((u16 *) bh_old->b_data)[w + z] =
-					((u16 *) bh->b_data)[v + z];
-				((u16 *) bh->b_data)[v + z] = 0;
-			}
-			mark_buffer_dirty(bh);
-			/* check if the same buffer */
-			if (x / VMU_DIR_ENTRIES_PER_BLOCK
-				!= y / VMU_DIR_ENTRIES_PER_BLOCK)
-				mark_buffer_dirty(bh_old);
-			brelse(bh_old);
-			break;
-		}
+		startpt = 0;
+		brelse(bh_old);
 	}
+lastdirfound:
+	if (found == 0) /* full directory */
+	{
+		l = vmudetails->dir_bnum - vmudetails->dir_len + 1;
+		k = VMU_DIR_ENTRIES_PER_BLOCK - 1;
+	}
+	else if (l == i && k == j + 1) /* deleted entry was last in dir */
+		goto finish; 
+	else if (k == 0)
+	{
+		l = l - 1;
+		k = VMU_DIR_ENTRIES_PER_BLOCK - 1;
+		if (l == i && k == j + 1)
+			goto finish;
+	}
+	/* fill gap first then wipe out old entry */
+	bh_old = vmufat_sb_bread(sb, l);
+	if (!bh_old) {
+		up(&vmudetails->vmu_sem);
+		brelse(bh);
+		goto failure;
+	}
+	for (m = 0; m < VMU_DIR_RECORD_LEN; m++) {
+		bh->bdata[j * VMU_DIR_RECORD_LEN + m] = bh_old->bdata[k * VMU_DIR_RECORD_LEN + m];
+		bh_old->bdata[k * VMU_DIR_RECORD_LEN + m] = 0;
+	}
+	mark_buffer_dirty(bh_old);
+	mark_buffer_dirty(bh);
+	brelse(bh_old);
+
+finish:
 	up(&vmudetails->vmu_sem);
 	brelse(bh);
 	return;
