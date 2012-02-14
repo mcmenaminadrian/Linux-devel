@@ -860,7 +860,7 @@ static void vmufat_evict_inode(struct inode *in)
 	end_writeback(in);
 }
 
-static int vmufat_clean_fat(super_block *sb, int inum)
+static int vmufat_clean_fat(struct super_block *sb, int inum)
 {
 	int error = 0;
 	u16 fatword, nextword;
@@ -897,7 +897,6 @@ static void vmufat_remove_inode(struct inode *in)
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	int i, j, k, l, startpt, found = 0;
-	u16 nextblock, fatdata;
 
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
 		in->i_ino = 0;
