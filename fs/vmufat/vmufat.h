@@ -110,16 +110,6 @@ struct vmufat_file_info {
 	char fname[VMUFAT_NAMELEN];
 };
 
-static inline int vmufat_index(int fno)
-{
-	return (fno % VMU_DIR_ENTRIES_PER_BLOCK) * VMU_DIR_RECORD_LEN;
-}
-
-static inline int vmufat_index_16(int fno)
-{
-	return (fno % VMU_DIR_ENTRIES_PER_BLOCK) * VMU_DIR_RECORD_LEN / 2;
-}
-
 static struct buffer_head *vmufat_sb_bread(struct super_block *sb,
 	sector_t block)
 {
