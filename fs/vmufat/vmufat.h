@@ -18,6 +18,7 @@
 /* parameters for possible VMU volume sizes */
 #define VMUFAT_MIN_BLK			0x80
 #define VMUFAT_MAX_BLK			0x1000
+#define VMUFAT_START_ALLOC		200
 
 /* specifcations for directory entries */
 #define VMU_DIR_RECORD_LEN		0x20
@@ -105,7 +106,6 @@ static struct vmufat_inode *VMUFAT_I(struct inode *in)
 
 struct vmufat_file_info {
 	u8 ftype;
-	u8 copy_pro;
 	u16 fblk;
 	char fname[VMUFAT_NAMELEN];
 };
