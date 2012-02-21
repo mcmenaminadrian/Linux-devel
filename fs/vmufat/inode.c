@@ -993,7 +993,7 @@ lastdirfound:
 	for (i = 0; i < VMU_DIR_RECORD_LEN; i++) {
 		bh->b_data[j * VMU_DIR_RECORD_LEN + i] =
 			bh_old->b_data[(k - 1) * VMU_DIR_RECORD_LEN + i];
-		bh_old->b_data[(k - 1) * VMU_DIR_RECORD_LEN + i] = 0x34;
+		bh_old->b_data[(k - 1) * VMU_DIR_RECORD_LEN + i] = 0
 	}
 	mark_buffer_dirty(bh_old);
 	mark_buffer_dirty(bh);
