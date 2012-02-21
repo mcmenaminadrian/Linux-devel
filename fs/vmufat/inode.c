@@ -907,7 +907,7 @@ printk("In vmufat_remove_inode\n");
 
 	down_interruptible(&vmudetails->vmu_sem);
 	if (vmufat_clean_fat(sb, in->i_ino)) {
-		up(&vmudetails->vmu_sem);
+		up(&vmudetails->vmu_sem); printk("Failed in clean fat\n");
 		goto failure;
 	}
 
@@ -978,7 +978,7 @@ lastdirfound:
 		goto finish; 
 	else if (k == 0)
 	{
-		l = l - 1;
+		l = l + 1;
 		k = VMU_DIR_ENTRIES_PER_BLOCK;
 		if (l == i && k == j + 1)
 			goto finish;
@@ -993,7 +993,7 @@ lastdirfound:
 	for (i = 0; i < VMU_DIR_RECORD_LEN; i++) {
 		bh->b_data[j * VMU_DIR_RECORD_LEN + i] =
 			bh_old->b_data[(k - 1) * VMU_DIR_RECORD_LEN + i];
-		bh_old->b_data[(k - 1) * VMU_DIR_RECORD_LEN + i] = 0;
+		bh_old->b_data[(k - 1) * VMU_DIR_RECORD_LEN + i] = 0x34;
 	}
 	mark_buffer_dirty(bh_old);
 	mark_buffer_dirty(bh);
