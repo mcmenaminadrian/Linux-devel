@@ -216,13 +216,13 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	long years, days;
 	unsigned char bcd_century, nl_day, bcd_month;
 	unsigned char u8year;
-	__kernel_time_t unix_date = in->i_mtime.tv_sec;
+	__kernel_time_t unix_date;
 
-	if (!in || !bh)
+	if (!in || !in->i_mtime || !bh)
 		return;
+	unix_date = in->i_mtime.tv_sec;
 
-	/* Unix epoch beings 1/1/1970, vmufat date stamps begin 1/1/1980 */
-	days = unix_date / SECONDS_PER_DAY - 3652;
+	days = unix_date / SECONDS_PER_DAY;
 	years = days / DAYS_PER_YEAR;
 
 	if ((years + 3) / 4 + DAYS_PER_YEAR * years > days)
@@ -242,11 +242,11 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	bcd_century = 19;
 	/* TODO: accounts for 21st century but will fail in 2100 
 	 	 because of leap days */
-	if (years > 19)
-		bcd_century += 1 + (years - 20)/100;
+	if (years > 29)
+		bcd_century += 1 + (years - 30)/100;
 
 	bh[index_to_dir + VMUFAT_DIR_CENT] = bin2bcd(bcd_century);
-	u8year = years + 80; /* account for epoch start */
+	u8year = years + 70; /* account for epoch start */
 	if (u8year > 99)
 		u8year = u8year - 100;
 
