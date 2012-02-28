@@ -48,6 +48,17 @@ Comstedt's website - http://mc.pp.se/dc/vms/flashmem.html)
 Header positioning is a matter for executible files written in native
 code for a physical VMU (an 8 bit Sanyo microcontroller).
 
+BCD dates are encoded as follows:
+Century prefix (eg., 20)
+Year (eg., 12)
+Month (eg., 02)
+Day in month (eg., 29)
+Hour (eg., 20)
+Minute (eg., 49)
+Second (eg., 22)
+Day of week (Monday is 00, Sunday is 06)
+
+
 FILE ALLOCATION TABLE
 Every block in the volume is mapped to the FAT eg., block 0 of the VMU maps to
 the first 16 bits of the FAT and so on. Blocks marked 0xFFFC are empty, blocks
@@ -55,4 +66,17 @@ allocated to a file are either numbered with with next block or, if the final
 block are marked 0xFFFA.
 
 ROOT BLOCK
-The first 
+The first 16 octets are marked as 0x55 - we use this to provide the "magic
+number" for this filesystem. The octets at 0x10 - 0x14 are used to determine
+the colour the representation of VMU is displayed in by a Dreamcast and our
+filesystem does not touch these.
+Octets 0x30 - 0x37 contain the BCD timestamp of the VMU.
+Octets 0x46 - 0x47 contain the location (little endian format) of the FAT
+Octets 0x48 - 0x49 contain the size (little endian) of the FAT
+Octets 0x4A - 0x4B contain the location (little endian) of the Directory
+Octets 0x4C - 0x4D contain the size (little endian) of the Directory
+Octets 0x4E - 0x4F is Dreamcast specific (icon shape)
+Octets 0x50 - 0x51 contain the number (little endian) of user blocks - NB this
+is marked as 200 in a physical VMU although there are in fact 241 usable
+blocks - the reason appears to be that the Directory is not big enough to
+support 1 block files in all user blocks.
