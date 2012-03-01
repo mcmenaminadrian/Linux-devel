@@ -218,22 +218,25 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	unsigned char u8year;
 	__kernel_time_t unix_date;
 
-	if (!in || !in->i_mtime || !bh)
+	if (!in || !bh)
 		return;
 	unix_date = in->i_mtime.tv_sec;
 
 	days = unix_date / SECONDS_PER_DAY;
 	years = days / DAYS_PER_YEAR;
 
-	if ((years + 3) / 4 + DAYS_PER_YEAR * years > days)
+	/* 1 Jan gets 1 day later after every leap year */
+	if ((years + 3) / 4 + DAYS_PER_YEAR * years >= days)
 		years--;
-
+	/* rebase days to account for leap years */
 	days -= (years + 3) / 4 + DAYS_PER_YEAR * years;
-	if (days == 59 && !(years & 3)) {
+	/* 1 Jan is Day 1 */
+	days++;
+	if (days == (FEB28 + 1) && !(years % 4)) {
 		nl_day = days;
 		bcd_month = 2;
 	} else {
-		nl_day = (years & 3) || days <= FEB28 ? days : days - 1;
+		nl_day = (years % 4) || days <= FEB28 ? days : days - 1;
 		for (bcd_month = 0; bcd_month < 12; bcd_month++)
 			if (day_n[bcd_month] > nl_day)
 				break;
@@ -253,7 +256,7 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	bh[index_to_dir + VMUFAT_DIR_YEAR] = bin2bcd(u8year);
 	bh[index_to_dir + VMUFAT_DIR_MONTH] = bin2bcd(bcd_month);
 	bh[index_to_dir + VMUFAT_DIR_DAY] =
-	    bin2bcd(days - day_n[bcd_month - 1] + 1);
+	    bin2bcd(days - day_n[bcd_month - 1]);
 	bh[index_to_dir + VMUFAT_DIR_HOUR] =
 	    bin2bcd((unix_date / SECONDS_PER_HOUR) % HOURS_PER_DAY);
 	bh[index_to_dir + VMUFAT_DIR_MIN] = bin2bcd((unix_date / SIXTY_MINS_OR_SECS)
