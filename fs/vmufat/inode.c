@@ -764,41 +764,23 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 {
 	int error = 0;
 	int free = 0;
-	int i, j;
-	struct buffer_head *bh_fat;
+	int i;
 	struct memcard *vmudetails;
 
-	if (!sb || !kstatbuf) {
+	if (!sb || !sb->s_fs_info || !kstatbuf) {
 		error = -EINVAL;
 		goto out;
 	}
-
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails) {
-		error = -EINVAL;
-		goto out;
-	}
 
 	/* Look through the FAT */
-	for (i = vmudetails->fat_bnum;
-		i > vmudetails->fat_bnum - vmudetails->fat_len; i--) {
-		bh_fat = vmufat_sb_bread(sb, i);
-		if (!bh_fat) {
-			error = -EIO;
-			goto out;
-		}
-		for (j = 0; j < VMU_BLK_SZ16; j++) {
-			if (vmufat_get_fat(sb, i * VMU_BLK_SZ16 + j) ==
-				VMUFAT_UNALLOCATED)
-				free++;
-		}
-		brelse(bh_fat);
+	for (i = 0; i < vmudetails->numblocks; i++) {
+		if (vmufat_get_fat(sb, i) == VMUFAT_UNALLOCATED)
+			free++;
 	}
-
 	kstatbuf->f_bfree = free;
 	kstatbuf->f_bavail = free;
 	kstatbuf->f_blocks = vmudetails->numblocks;
-
 out:
 	return error;
 }
