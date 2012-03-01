@@ -24,7 +24,7 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	struct inode *ino;
 	char name[VMUFAT_NAMELEN];
 	int i, j, error = -EINVAL;
-	if (!dent || !in || !in->i_sb) 
+	if (!dent || !in || !in->i_sb)
 		goto out;
 	if (dent->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
@@ -37,8 +37,7 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	error = 0;
 
 	for (i = vmudetails->dir_bnum;
-		i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
-	{
+		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		brelse(bufhead);
 		bufhead = vmufat_sb_bread(sb, i);
 		if (!bufhead) {
