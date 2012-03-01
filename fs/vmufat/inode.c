@@ -241,8 +241,8 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	}
 
 	bcd_century = 19;
-	/* TODO:	accounts for 21st century but will fail in 2100
-	 		because of leap days */
+	/* TODO:accounts for 21st century but will fail in 2100
+		because of leap days */
 	if (years > 29)
 		bcd_century += 1 + (years - 30)/100;
 
@@ -683,7 +683,8 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 					error = -EIO;
 					goto failed;
 				}
-				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
+				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
+				{
 					if (bh->b_data
 					[j * VMU_DIR_RECORD_LEN] == 0) {
 						printk("VMUFAT:"
@@ -780,15 +781,13 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 
 	/* Look through the FAT */
 	for (i = vmudetails->fat_bnum;
-		i > vmudetails->fat_bnum - vmudetails->fat_len; i--)
-	{
+		i > vmudetails->fat_bnum - vmudetails->fat_len; i--) {
 		bh_fat = vmufat_sb_bread(sb, i);
 		if (!bh_fat) {
 			error = -EIO;
 			goto out;
 		}
-		for (j = 0; j < VMU_BLK_SZ16; j++)
-		{
+		for (j = 0; j < VMU_BLK_SZ16; j++) {
 			if (vmufat_get_fat(sb, i * VMU_BLK_SZ16 + j) ==
 				VMUFAT_UNALLOCATED)
 				free++;
@@ -808,7 +807,7 @@ static int vmufat_statfs(struct dentry *dentry, struct kstatfs *kstatbuf)
 {
 	int error;
 	struct super_block *sb;
-	
+
 	if (!dentry || !kstatbuf) {
 		error = -EINVAL;
 		goto out;
@@ -861,7 +860,7 @@ static int vmufat_clean_fat(struct super_block *sb, int inum)
 		if (fatword == VMUFAT_FILE_END)
 			goto out;
 		nextword = fatword;
-	} while(1);
+	} while (1);
 out:
 	return error;
 }
@@ -902,16 +901,14 @@ static void vmufat_remove_inode(struct inode *in)
 	 * Have to wander through this
 	 * to find the appropriate entry */
 	for (i = vmudetails->dir_bnum;
-		i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
-	{
+		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		brelse(bh);
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
 			up(&vmudetails->vmu_sem);
 			goto failure;
 		}
-		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
-		{
+		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 			if (bh->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
 				up(&vmudetails->vmu_sem);
 				goto failure;
@@ -937,15 +934,13 @@ found:
 	/* Patch up directory, by moving up last file */
 	found = 0;
 	startpt = j + 1;
-	for (l = i; l > vmudetails->dir_bnum - vmudetails->dir_len; l--)
-	{
+	for (l = i; l > vmudetails->dir_bnum - vmudetails->dir_len; l--) {
 		bh_old = vmufat_sb_bread(sb, l);
 		if (!bh_old) {
 			up(&vmudetails->vmu_sem);
 			goto failure;
 		}
-		for (k = startpt; k < VMU_DIR_ENTRIES_PER_BLOCK; k++)
-		{
+		for (k = startpt; k < VMU_DIR_ENTRIES_PER_BLOCK; k++) {
 			if (bh_old->b_data[k * VMU_DIR_RECORD_LEN] == 0) {
 				found = 1;
 				brelse(bh_old);
@@ -956,15 +951,12 @@ found:
 		brelse(bh_old);
 	}
 lastdirfound:
-	if (found == 0) /* full directory */
-	{
+	if (found == 0) {	/* full directory */
 		l = vmudetails->dir_bnum - vmudetails->dir_len + 1;
 		k = VMU_DIR_ENTRIES_PER_BLOCK;
-	}
-	else if (l == i && k == j + 1) /* deleted entry was last in dir */
-		goto finish; 
-	else if (k == 0)
-	{
+	} else if (l == i && k == j + 1) /* deleted entry was last in dir */
+		goto finish;
+	else if (k == 0) {
 		l = l + 1;
 		k = VMU_DIR_ENTRIES_PER_BLOCK;
 		if (l == i && k == j + 1)
@@ -1141,7 +1133,7 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	struct buffer_head *bh = NULL;
 	unsigned long inode_num;
 	int i, j, found = 0;
-	struct super_block *sb; 
+	struct super_block *sb;
 	struct memcard *vmudetails;
 	if (!in || !in->i_sb || !in->i_ino)
 		return -EINVAL;
@@ -1150,10 +1142,8 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	if (!vmudetails)
 		return -EINVAL;
 
-	/* As most real world devices are flash
- 	 * we won't update the superblock every
- 	 * time we change something else on the fs
- 	 * - it is ugly but a sensible compromise
+	/*	As most real world devices are flash
+ 	 *	we won't update the superblock every time
  	 */
 	if (in->i_ino == vmudetails->sb_bnum)
 		return 0;
@@ -1167,15 +1157,13 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	/* Now search for the directory entry */
 	down_interruptible(&vmudetails->vmu_sem);
 	for (i = vmudetails->dir_bnum;
-		i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
-	{
+		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
 			up(&vmudetails->vmu_sem);
 			return -EIO;
 		}
-		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
-		{
+		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 			if (bh->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
 				up(&vmudetails->vmu_sem);
 				brelse(bh);
@@ -1289,8 +1277,7 @@ static int vmufat_fill_super(struct super_block *sb,
 
 	/* 
 	 * Hardware VMUs are 256 blocks in size but
-	 * the specification allows for other sizes so
-	 * we search through sizes
+	 * the specification allows for other sizes
 	 */
 	for (test_sz = VMUFAT_MIN_BLK; test_sz < VMUFAT_MAX_BLK;
 				test_sz = test_sz * 2) {
@@ -1326,9 +1313,10 @@ static int vmufat_fill_super(struct super_block *sb,
 		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_DIR]);
 	vmudata->dir_len =
 		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_DIRLEN]);
+
 	/* return the true number of user available blocks - VMUs
- 	* return a neat 200 and ignore 40 blocks of usable space -
- 	* we get round that in a hardware neutral way */
+ 	 * return a neat 200 and ignore 40 blocks of usable space -
+ 	 * we get round that in a hardware neutral way */
 	vmudata->numblocks = vmudata->dir_bnum - vmudata->dir_len + 1;
 	sema_init(&vmudata->vmu_sem, 1);
 	sb->s_fs_info = vmudata;
