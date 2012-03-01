@@ -44,9 +44,8 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 			error = -EIO;
 			goto out;
 		}
-		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
-		{
-			if (bufhead->b_data[j * VMU_DIR_RECORD_LEN] == 0) 
+		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
+			if (bufhead->b_data[j * VMU_DIR_RECORD_LEN] == 0)
 				goto fail;
 			/* get name and check for match */
 			memcpy(name,
@@ -105,12 +104,12 @@ static int vmufat_find_free(struct super_block *sb)
 			error = -EIO;
 			goto fail;
 		}
+
 		/* Specification allows for more than one FAT block
 		 * but need to careful we do not over-write root
 		 * block which may be marked as unallocated on new
 		 * VMU device
 		 */
-	
 		if (fatblk < vmudetails->fat_bnum)
 			index_to_fat = VMU_BLK_SZ16 - 1;
 		else
@@ -134,7 +133,7 @@ static int vmufat_find_free(struct super_block *sb)
 		put_bh(bh_fat);
 	}
 out_of_loop:
-	if (found) 
+	if (found)
 		return (vmudetails->fat_bnum - fatblk) * VMU_BLK_SZ16
 			+ testblk - diff;
 
@@ -207,7 +206,7 @@ out:
 
 /*
  * write out the date in bcd format
- * in the appropriate part of the 
+ * in the appropriate part of the
  * directory entry
  */
 static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
@@ -242,8 +241,8 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	}
 
 	bcd_century = 19;
-	/* TODO: accounts for 21st century but will fail in 2100 
-	 	 because of leap days */
+	/* TODO:	accounts for 21st century but will fail in 2100
+	 		because of leap days */
 	if (years > 29)
 		bcd_century += 1 + (years - 30)/100;
 
@@ -258,12 +257,15 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	    bin2bcd(days - day_n[bcd_month - 1]);
 	bh[index_to_dir + VMUFAT_DIR_HOUR] =
 	    bin2bcd((unix_date / SECONDS_PER_HOUR) % HOURS_PER_DAY);
-	bh[index_to_dir + VMUFAT_DIR_MIN] = bin2bcd((unix_date / SIXTY_MINS_OR_SECS)
+	bh[index_to_dir + VMUFAT_DIR_MIN] =
+		bin2bcd((unix_date / SIXTY_MINS_OR_SECS)
 		 % SIXTY_MINS_OR_SECS);
-	bh[index_to_dir + VMUFAT_DIR_SEC] = bin2bcd(unix_date % SIXTY_MINS_OR_SECS);
+	bh[index_to_dir + VMUFAT_DIR_SEC] =
+		bin2bcd(unix_date % SIXTY_MINS_OR_SECS);
 }
 
-static int vmufat_allocate_inode(umode_t imode, struct super_block *sb, struct inode *in)
+static int vmufat_allocate_inode(umode_t imode,
+		struct super_block *sb, struct inode *in)
 {
 	int error;
 	if (!sb || !in)
@@ -272,8 +274,8 @@ static int vmufat_allocate_inode(umode_t imode, struct super_block *sb, struct i
 	if (imode & 0111) {
 		in->i_ino = VMUFAT_ZEROBLOCK;
 		if (vmufat_get_fat(sb, 0) != VMUFAT_UNALLOCATED) {
-			printk("VMUFAT: cannot write excutable file to volume."
-				"Block 0 already allocated.\n");
+			printk(KERN_ERR "VMUFAT: cannot write excutable "
+				"file. Volume block 0 already allocated.\n");
 			error = -ENOSPC;
 			goto out;
 		}
@@ -287,7 +289,8 @@ out:
 	return error;
 }
 
-static void vmufat_setup_inode(struct inode *in, umode_t imode, struct super_block *sb)
+static void vmufat_setup_inode(struct inode *in, umode_t imode,
+		struct super_block *sb)
 {
 	if (!in)
 		return;
@@ -354,8 +357,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	* Now search for space for the directory entry */
 	down_interruptible(&vmudetails->vmu_sem);
 	for (i = vmudetails->dir_bnum;
-		i > vmudetails->dir_bnum - vmudetails->dir_len; i--)
-	{
+		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		brelse(bh);
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
@@ -363,8 +365,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 			error = -EIO;
 			goto clean_fat;
 		}
-		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
-		{
+		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 			if (((bh->b_data)[j * VMU_DIR_RECORD_LEN]) == 0) {
 				up(&vmudetails->vmu_sem);
 				found = 1;
@@ -372,7 +373,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 			}
 		}
 	}
-	if (found == 0) 
+	if (found == 0)
 		goto clean_fat;
 dir_space_found:
 	j = j * VMU_DIR_RECORD_LEN;
@@ -477,8 +478,7 @@ static int vmufat_readdir(struct file *filp, void *dirent, filldir_t filldir)
 
 	for (j = vmudetails->dir_bnum -
 		(index - 2) / VMU_DIR_ENTRIES_PER_BLOCK;
-		j > vmudetails->dir_bnum - vmudetails->dir_len; j--)
-	{
+		j > vmudetails->dir_bnum - vmudetails->dir_len; j--) {
 		brelse(bh);
 		bh = vmufat_sb_bread(sb, j);
 		if (!bh) {
@@ -486,8 +486,7 @@ static int vmufat_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			goto finish;
 		}
 		for (k = (index - 2) % VMU_DIR_ENTRIES_PER_BLOCK;
-			k < VMU_DIR_ENTRIES_PER_BLOCK; k++)
-		{
+			k < VMU_DIR_ENTRIES_PER_BLOCK; k++) {
 			saved_file->ftype = bh->b_data[k * VMU_DIR_RECORD_LEN];
 			if (saved_file->ftype == 0)
 				goto finish;
@@ -531,8 +530,8 @@ static long vmufat_get_date(struct buffer_head *bh, int offset)
 	minute = bcd2bin(bh->b_data[offset++]);
 	second = bcd2bin(bh->b_data[offset]);
 
-	return 	mktime(century * 100 + year, month, day, hour, minute,
-			second);
+	return mktime(century * 100 + year, month, day, hour, minute,
+		second);
 }
 
 static struct inode *vmufat_alloc_inode(struct super_block *sb)
@@ -579,10 +578,10 @@ static int vmufat_list_blocks(struct inode *in)
 	if (!in || !in->i_sb || !in->i_ino)
 		goto out;
 	vi = VMUFAT_I(in);
-	if (!vi) 
+	if (!vi)
 		goto out;
 	sb = in->i_sb;
-	ino = in->i_ino; 
+	ino = in->i_ino;
 	vmudetails = sb->s_fs_info;
 	if (!vmudetails)
 		goto out;
@@ -677,16 +676,14 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 			/* Scan through the directory to find matching file */
 			for (i = vmudetails->dir_bnum;
 				i > vmudetails->dir_bnum - vmudetails->dir_len;
-				i--)
-			{
+				i--) {
 				brelse(bh);
 				bh = vmufat_sb_bread(sb, i);
 				if (!bh) {
 					error = -EIO;
 					goto failed;
 				}
-				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
-				{
+				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 					if (bh->b_data
 					[j * VMU_DIR_RECORD_LEN] == 0) {
 						printk("VMUFAT:"
