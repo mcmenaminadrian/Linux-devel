@@ -16,8 +16,8 @@
 #define VMUFAT_ERROR			0xFFFF
 
 /* parameters for possible VMU volume sizes */
-#define VMUFAT_MIN_BLK			0x80
-#define VMUFAT_MAX_BLK			0x1000
+#define VMUFAT_MIN_BLK			0x04
+#define VMUFAT_MAX_BLK			0x10000
 #define VMUFAT_START_ALLOC		199
 
 /* specifcations for directory entries */

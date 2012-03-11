@@ -1261,7 +1261,7 @@ static int vmufat_fill_super(struct super_block *sb,
 	 * Hardware VMUs are 256 blocks in size but
 	 * the specification allows for other sizes
 	 */
-	for (test_sz = VMUFAT_MIN_BLK; test_sz < VMUFAT_MAX_BLK;
+	for (test_sz = VMUFAT_MIN_BLK; test_sz <= VMUFAT_MAX_BLK;
 				test_sz = test_sz * 2) {
 		bh = vmufat_sb_bread(sb, test_sz - 1);
 		if (!bh) {
@@ -1271,7 +1271,7 @@ static int vmufat_fill_super(struct super_block *sb,
 		if (check_sb_format(bh))
 			break;
 		brelse(bh);
-		if (test_sz == VMUFAT_MAX_BLK) {	/* failed */
+		if (test_sz > VMUFAT_MAX_BLK) {	/* failed */
 			printk(KERN_ERR
 				"VMUFAT: attempted to mount corrupted vmufat"
 				" or non-vmufat volume as vmufat\n");
