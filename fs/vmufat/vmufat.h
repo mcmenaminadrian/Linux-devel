@@ -26,6 +26,9 @@
 #define VMU_DIR_ENTRIES_PER_BLOCK	0x10
 #define VMUFAT_NAME_OFFSET		0x04
 #define VMUFAT_FIRSTBLOCK_OFFSET16	0x01
+#define VMUFAT_START_OFFSET16		0x01
+#define VMUFAT_SIZE_OFFSET16		0x0C
+#define VMUFAT_HEADER_OFFSET16		0x0D
 
 /* File types used in directory */
 #define VMU_GAME			0xCC
@@ -41,6 +44,10 @@
 /* date offsets */
 #define VMUFAT_SB_DATEOFFSET		0x30
 #define VMUFAT_FILE_DATEOFFSET		0x10
+
+#define EXEC				0111
+#define NOCOPY				0xFF
+#define CANCOPY				0x00
 
 static struct kmem_cache *vmufat_inode_cachep;
 static struct kmem_cache *vmufat_blist_cachep;
@@ -68,9 +75,7 @@ enum vmufat_date {
 	VMUFAT_DIR_DOW
 };
 
-/* constants for BCD conversion - some of these
- * are obvious but will make conversion routine
- * easier to grasp all the same */
+/* constants for BCD conversion */ 
 #define SECONDS_PER_DAY			86400
 #define DAYS_PER_YEAR			365
 #define SECONDS_PER_HOUR		3600

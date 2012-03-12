@@ -1,17 +1,34 @@
 /*
- * inode operations for the VMUFAT file system
+ * VMUFAT file system
  *
  * Copyright (C) 2002 - 2012	Adrian McMenamin
  * Copyright (C) 2002		Paul Mundt
  *
- * Released under the terms of the GNU GPL.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
+
+#include <asm/rtc.h>
 #include <linux/fs.h>
 #include <linux/bcd.h>
+#include <linux/rtc.h>
 #include <linux/slab.h>
 #include <linux/magic.h>
+#include <linux/device.h>
 #include <linux/module.h>
 #include <linux/statfs.h>
+#include <linux/alarmtimer.h>
 #include <linux/buffer_head.h>
 #include "vmufat.h"
 
@@ -204,25 +221,17 @@ out:
 	return 0;
 }
 
-/*
- * write out the date in bcd format
- * in the appropriate part of the
- * directory entry
- */
-static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
+
+static void vmufat_save_bcd_nortc(struct inode *in, char *bh, int index_to_dir)
 {
 	long years, days;
 	unsigned char bcd_century, nl_day, bcd_month;
 	unsigned char u8year;
 	__kernel_time_t unix_date;
 
-	if (!in || !bh)
-		return;
 	unix_date = in->i_mtime.tv_sec;
-
 	days = unix_date / SECONDS_PER_DAY;
 	years = days / DAYS_PER_YEAR;
-
 	/* 1 Jan gets 1 day later after every leap year */
 	if ((years + 3) / 4 + DAYS_PER_YEAR * years >= days)
 		years--;
@@ -247,7 +256,7 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 		bcd_century += 1 + (years - 30)/100;
 
 	bh[index_to_dir + VMUFAT_DIR_CENT] = bin2bcd(bcd_century);
-	u8year = years + 70; /* account for epoch start */
+	u8year = years + 70; /* account for epoch */
 	if (u8year > 99)
 		u8year = u8year - 100;
 
@@ -264,6 +273,40 @@ static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 		bin2bcd(unix_date % SIXTY_MINS_OR_SECS);
 }
 
+static void vmufat_save_bcd_rtc(struct rtc_device *rtc, struct inode *in,
+	char *bh, int index_to_dir)
+{
+	struct rtc_time now;
+
+	if (rtc_read_time(rtc, &now) < 0)
+		vmufat_save_bcd_nortc(in, bh, index_to_dir);
+	bh[index_to_dir + VMUFAT_DIR_CENT] = bin2bcd((char)(now.tm_year/100));
+	bh[index_to_dir + VMUFAT_DIR_YEAR] = bin2bcd((char)(now.tm_year % 100));
+	bh[index_to_dir + VMUFAT_DIR_MONTH] = bin2bcd((char)(now.tm_mon));
+	bh[index_to_dir + VMUFAT_DIR_DAY] = bin2bcd((char)(now.tm_mday));
+	bh[index_to_dir + VMUFAT_DIR_HOUR] = bin2bcd((char)(now.tm_hour));
+	bh[index_to_dir + VMUFAT_DIR_MIN] = bin2bcd((char)(now.tm_min));
+	bh[index_to_dir + VMUFAT_DIR_SEC] = bin2bcd((char)(now.tm_sec));
+	bh[index_to_dir + VMUFAT_DIR_DOW] = bin2bcd((char)(now.tm_wday));
+}
+
+/*
+ * write out the date in bcd format
+ * in the appropriate part of the
+ * directory entry
+ */
+static void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
+{
+	struct rtc_device *rtc;
+	rtc = rtc_class_open("rtc0");
+	if (!rtc)
+		vmufat_save_bcd_nortc(in, bh, index_to_dir);
+	else {
+		vmufat_save_bcd_rtc(rtc, in, bh, index_to_dir);
+		rtc_class_close(rtc);
+	}	
+}
+
 static int vmufat_allocate_inode(umode_t imode,
 		struct super_block *sb, struct inode *in)
 {
@@ -271,7 +314,7 @@ static int vmufat_allocate_inode(umode_t imode,
 	if (!sb || !in)
 		return -EINVAL;
 	/* Executable files must be at the start of the volume */
-	if (imode & 0111) {
+	if (imode & EXEC) {
 		in->i_ino = VMUFAT_ZEROBLOCK;
 		if (vmufat_get_fat(sb, 0) != VMUFAT_UNALLOCATED) {
 			printk(KERN_ERR "VMUFAT: cannot write excutable "
@@ -304,6 +347,28 @@ static void vmufat_setup_inode(struct inode *in, umode_t imode,
 	in->i_op = &vmufat_inode_operations;
 	in->i_fop = &vmufat_file_operations;
 	in->i_mapping->a_ops = &vmufat_address_space_operations;
+}
+
+static void vmu_handle_zeroblock(int recno, struct buffer_head *bh, int ino)
+{
+	/* offset and header offset settings */
+	if (ino != VMUFAT_ZEROBLOCK) {
+		((u16 *) bh->b_data)[recno + VMUFAT_START_OFFSET16] =
+		    cpu_to_le16(ino);
+		((u16 *) bh->b_data)[recno + VMUFAT_HEADER_OFFSET16] = 0;
+	} else {
+		((u16 *) bh->b_data)[recno + VMUFAT_START_OFFSET16] = 0;
+		((u16 *) bh->b_data)[recno + VMUFAT_HEADER_OFFSET16] = 1;
+	}
+}
+
+static void vmu_write_name(int recno, struct buffer_head *bh, char* name,
+	int len)
+{
+	memset((char *) (bh->b_data + recno + VMUFAT_NAME_OFFSET), '\0',
+		VMUFAT_NAMELEN);
+	memcpy((char *) (bh->b_data + recno + VMUFAT_NAME_OFFSET),
+		name, len);
 }
 
 static int vmufat_inode_create(struct inode *dir, struct dentry *de,
@@ -379,39 +444,25 @@ dir_space_found:
 	j = j * VMU_DIR_RECORD_LEN;
 	/* Have the directory entry
 	 * so now update it */
-	if (imode & 0111)
+	if (imode & EXEC)
 		bh->b_data[j] = VMU_GAME;	/* exec file */
 	else
 		bh->b_data[j] = VMU_DATA;
 
 	/* copy protection settings */
-	if (bh->b_data[j + 1] != (char) 0xff)
-		bh->b_data[j + 1] = (char) 0x00;
+	if (bh->b_data[j + 1] != (char) NOCOPY)
+		bh->b_data[j + 1] = (char) CANCOPY;
 
-	/* offset and header offset settings */
-	if (inode->i_ino != VMUFAT_ZEROBLOCK) {
-		((u16 *) bh->b_data)[j / 2 + 1] =
-		    cpu_to_le16(inode->i_ino);
-		((u16 *) bh->b_data)[j / 2 + 0x0D] = 0;
-	} else {
-		((u16 *) bh->b_data)[j / 2 + 1] = 0;
-		((u16 *) bh->b_data)[j / 2 + 0x0D] = 1;
-	}
-
-	/* Name */
-	memset((char *) (bh->b_data + j + VMUFAT_NAME_OFFSET), '\0',
-		VMUFAT_NAMELEN);
-	memcpy((char *) (bh->b_data + j + VMUFAT_NAME_OFFSET),
-		((de->d_name).name), de->d_name.len);
+	vmu_handle_zeroblock(j / 2, bh, inode->i_ino);
+	vmu_write_name(j, bh, (char *) de->d_name.name, de->d_name.len);
 
 	/* BCD timestamp it */
 	vmufat_save_bcd(inode, bh->b_data, j);
 
-	((u16 *) bh->b_data)[j / 2 + 0x0C] =
+	((u16 *) bh->b_data)[j / 2 + VMUFAT_SIZE_OFFSET16] =
 	    cpu_to_le16(inode->i_blocks);
 	mark_buffer_dirty(bh);
 	brelse(bh);
-
 	error = vmufat_list_blocks(inode);
 	if (error)
 		goto clean_fat;
@@ -425,6 +476,9 @@ clean_fat:
 clean_inode:
 	iput(inode);
 out:
+	if (error < 0)
+		printk(KERN_WARNING "VMUFAT: inode creation fails with error"
+			" %i\n", error);
 	return error;
 }
 
@@ -635,7 +689,7 @@ unwind_out:
 static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 {
 	struct buffer_head *bh = NULL;
-	int error, i, j, found = 0;
+	int error = 0, i, j, found = 0;
 	int offsetindir;
 	struct inode *inode;
 	struct memcard *vmudetails;
@@ -757,7 +811,6 @@ static void vmufat_put_super(struct super_block *sb)
 	sb->s_dev = 0;
 	kfree(sb->s_fs_info);
 }
-
 
 static int vmufat_count_freeblocks(struct super_block *sb,
 					struct kstatfs *kstatbuf)
@@ -1197,17 +1250,13 @@ found:
 
 static int check_sb_format(struct buffer_head *bh)
 {
-	u32 s_magic = VMUFAT_MAGIC;
 	if (!bh)
 		return -EINVAL;
 
-	if (!(((u32 *) bh->b_data)[0] == s_magic &&
-		((u32 *) bh->b_data)[1] == s_magic &&
-		((u32 *) bh->b_data)[2] == s_magic &&
-		((u32 *) bh->b_data)[3] == s_magic))
-		return 0;
-	else
-		return 1;
+	return (((u32 *) bh->b_data)[0] == VMUFAT_MAGIC &&
+		((u32 *) bh->b_data)[1] == VMUFAT_MAGIC &&
+		((u32 *) bh->b_data)[2] == VMUFAT_MAGIC &&
+		((u32 *) bh->b_data)[3] == VMUFAT_MAGIC);
 }
 
 static void init_once(void *foo)
@@ -1217,7 +1266,6 @@ static void init_once(void *foo)
 	vi->nblcks = 0;
 	inode_init_once(&vi->vfs_inode);
 }
-
 
 static int init_inodecache(void)
 {
