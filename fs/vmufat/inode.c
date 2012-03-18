@@ -90,10 +90,7 @@ fail:
 	d_add(dent, NULL); /* Did not find the file */
 out:
 	brelse(bufhead);
-	if (error)
-		return ERR_PTR(error);
-	else
-		return NULL;
+	return ERR_PTR(error);
 }
 
 /*
@@ -122,22 +119,13 @@ static int vmufat_find_free(struct super_block *sb)
 			goto fail;
 		}
 
-		/* Specification allows for more than one FAT block
-		 * but need to careful we do not over-write root
-		 * block which may be marked as unallocated on new
-		 * VMU device
-		 */
-		if (fatblk < vmudetails->fat_bnum)
-			index_to_fat = VMU_BLK_SZ16 - 1;
-		else
-			index_to_fat =
-				vmudetails->fat_bnum - vmudetails->fat_len;
+		index_to_fat = 0xFF;
 		/* prefer not to allocate to higher blocks if we can
 		 * to ensure full compatibility with Dreamcast devices */
 		diff = index_to_fat - VMUFAT_START_ALLOC;
 		for (testblk = index_to_fat; testblk > 0; testblk--) {
-			if (testblk - diff < 0)
-				diff = -index_to_fat - 1;
+			if (diff > 0 && testblk - diff < 0)
+				diff = -VMUFAT_START_ALLOC - 1;
 			fatdata =
 				le16_to_cpu(((u16 *) bh_fat->b_data)
 				[testblk - diff]);
@@ -150,11 +138,13 @@ static int vmufat_find_free(struct super_block *sb)
 		put_bh(bh_fat);
 	}
 out_of_loop:
-	if (found)
-		return (vmudetails->fat_bnum - fatblk) * VMU_BLK_SZ16
-			+ testblk - diff;
+	if (found) {
+		error = (fatblk - 1 - vmudetails->fat_bnum + vmudetails->fat_len)
+			* VMU_BLK_SZ16 + testblk - diff;
+		return error;
+	}
 
-	printk(KERN_ERR "VMUFAT: volume is full\n");
+	printk(KERN_WARNING "VMUFAT: volume is full\n");
 	error = -ENOSPC;
 fail:
 	return error;
@@ -167,7 +157,6 @@ static u16 vmufat_get_fat(struct super_block *sb, long block)
 	int offset;
 	u16 block_content = VMUFAT_ERROR;
 	struct memcard *vmudetails;
-
 	if (!sb || !sb->s_fs_info)
 		goto out;
 	vmudetails = sb->s_fs_info;
@@ -317,7 +306,7 @@ static int vmufat_allocate_inode(umode_t imode,
 	if (imode & EXEC) {
 		in->i_ino = VMUFAT_ZEROBLOCK;
 		if (vmufat_get_fat(sb, 0) != VMUFAT_UNALLOCATED) {
-			printk(KERN_ERR "VMUFAT: cannot write excutable "
+			printk(KERN_WARNING "VMUFAT: cannot write excutable "
 				"file. Volume block 0 already allocated.\n");
 			error = -ENOSPC;
 			goto out;
@@ -337,6 +326,7 @@ static void vmufat_setup_inode(struct inode *in, umode_t imode,
 {
 	if (!in)
 		return;
+
 	in->i_uid = 0;
 	in->i_gid = 0;
 	in->i_mtime = in->i_atime = in->i_ctime = CURRENT_TIME;
@@ -383,7 +373,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	if (!dir || !de) {
 		error = -EINVAL;
 		goto out;
-	}
+	} 
 
 	if (de->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
@@ -419,7 +409,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	vmufat_setup_inode(inode, imode, sb);
 
 	/* Write to the directory
-	* Now search for space for the directory entry */
+	 * Now search for space for the directory entry */
 	down_interruptible(&vmudetails->vmu_sem);
 	for (i = vmudetails->dir_bnum;
 		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
@@ -477,7 +467,7 @@ clean_inode:
 	iput(inode);
 out:
 	if (error < 0)
-		printk(KERN_WARNING "VMUFAT: inode creation fails with error"
+		printk(KERN_ERR "VMUFAT: inode creation fails with error"
 			" %i\n", error);
 	return error;
 }
@@ -594,6 +584,7 @@ static struct inode *vmufat_alloc_inode(struct super_block *sb)
 		GFP_KERNEL);
 	if (!vi)
 		return NULL;
+
 	INIT_LIST_HEAD(&vi->blocks.b_list);
 	return &vi->vfs_inode;
 }
@@ -628,9 +619,9 @@ static int vmufat_list_blocks(struct inode *in)
 	struct list_head *iter, *iter2;
 	struct vmufat_block_list *vbl, *nvbl;
 	u16 fatdata;
-
-	if (!in || !in->i_sb || !in->i_ino)
+	if (!in || !in->i_sb)
 		goto out;
+	
 	vi = VMUFAT_I(in);
 	if (!vi)
 		goto out;
@@ -666,7 +657,7 @@ static int vmufat_list_blocks(struct inode *in)
 		/* Find next block in the FAT - if there is one */
 		fatdata = vmufat_get_fat(sb, nextblock);
 		if (fatdata == VMUFAT_UNALLOCATED) {
-			printk(KERN_WARNING "VMUFAT: FAT table appears to have"
+			printk(KERN_ERR "VMUFAT: FAT table appears to have"
 				" been corrupted.\n");
 			error = -EIO;
 			goto unwind_out;
@@ -698,6 +689,7 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 		error = -EINVAL;
 		goto reterror;
 	}
+
 	vmudetails = sb->s_fs_info;
 	inode = iget_locked(sb, ino);
 	if (!inode) {
@@ -739,13 +731,9 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 				}
 				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
 				{
-					if (bh->b_data
-					[j * VMU_DIR_RECORD_LEN] == 0) {
-						printk("VMUFAT:"
-							" file not found\n");
-						error = -ENOENT;
-						goto failed;
-					}
+					if (bh->b_data[j * VMU_DIR_RECORD_LEN]
+						== 0)
+						goto notfound;
 					if (le16_to_cpu(((u16 *) bh->b_data)
 					[j * VMU_DIR_RECORD_LEN16 +
 					VMUFAT_FIRSTBLOCK_OFFSET16]) == ino) {
@@ -754,9 +742,10 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 					}
 				}
 			}
+notfound:
+			error = -ENOENT;
+			goto failed;
 found:
-			if (found == 0)
-				goto failed;
 			/* identified the correct directory entry */
 			offsetindir = j * VMU_DIR_RECORD_LEN;
 			inode->i_ctime.tv_sec = inode->i_mtime.tv_sec =
@@ -868,6 +857,7 @@ static void vmufat_evict_inode(struct inode *in)
 {
 	if (!in)
 		return;
+
 	truncate_inode_pages(&in->i_data, 0);
 	invalidate_inode_buffers(in);
 	in->i_size = 0;
@@ -882,6 +872,7 @@ static int vmufat_clean_fat(struct super_block *sb, int inum)
 		error = -EINVAL;
 		goto out;
 	}
+
 	nextword = inum;
 	do {
 		fatword = vmufat_get_fat(sb, nextword);
@@ -1065,7 +1056,6 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	if (!vmudetails)
 		goto out;
 
-	/* quick sanity check */
 	if (vin->nblcks <= 0)
 		goto out;
 	if (iblock < vin->nblcks) {
@@ -1170,7 +1160,7 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	int i, j, found = 0;
 	struct super_block *sb;
 	struct memcard *vmudetails;
-	if (!in || !in->i_sb || !in->i_ino)
+	if (!in || !in->i_sb)
 		return -EINVAL;
 	sb = in->i_sb;
 	vmudetails = sb->s_fs_info;
@@ -1182,7 +1172,6 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
  	 */
 	if (in->i_ino == vmudetails->sb_bnum)
 		return 0;
-
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
 		inode_num = 0;
 	else

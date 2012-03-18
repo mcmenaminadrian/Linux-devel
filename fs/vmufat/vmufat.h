@@ -6,7 +6,7 @@
 #define VMUFAT_NAMELEN			12
 
 /* GNU utils won't list files with inode num 0 */
-#define VMUFAT_ZEROBLOCK		32768
+#define VMUFAT_ZEROBLOCK		0xFFFF
 #define VMU_BLK_SZ			512
 #define	VMU_BLK_SZ16			256
 
@@ -100,11 +100,11 @@ struct vmufat_block_list {
 
 struct vmufat_inode {
 	struct vmufat_block_list blocks;
-	int nblcks;
+	unsigned int nblcks;
 	struct inode vfs_inode;
 };
 
-static struct vmufat_inode *VMUFAT_I(struct inode *in)
+inline static struct vmufat_inode *VMUFAT_I(struct inode *in)
 {
 	return container_of(in, struct vmufat_inode, vfs_inode);
 }
@@ -115,7 +115,7 @@ struct vmufat_file_info {
 	char fname[VMUFAT_NAMELEN];
 };
 
-static struct buffer_head *vmufat_sb_bread(struct super_block *sb,
+inline static struct buffer_head *vmufat_sb_bread(struct super_block *sb,
 	sector_t block)
 {
 	if (!sb)
