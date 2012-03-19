@@ -24,11 +24,11 @@
 #include <linux/bcd.h>
 #include <linux/rtc.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/magic.h>
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/statfs.h>
-#include <linux/alarmtimer.h>
 #include <linux/buffer_head.h>
 #include "vmufat.h"
 
@@ -327,8 +327,8 @@ static void vmufat_setup_inode(struct inode *in, umode_t imode,
 	if (!in)
 		return;
 
-	in->i_uid = 0;
-	in->i_gid = 0;
+	in->i_uid = current_fsuid();
+	in->i_gid = current_fsgid();
 	in->i_mtime = in->i_atime = in->i_ctime = CURRENT_TIME;
 	in->i_mode = imode;
 	in->i_blocks = 1;
@@ -699,8 +699,8 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 	superblock_bno = vmudetails->sb_bnum;
 
 	if (inode->i_state & I_NEW) {
-		inode->i_uid = 0;
-		inode->i_gid = 0;
+		inode->i_uid = current_fsuid();
+		inode->i_gid = current_fsgid();
 		inode->i_mode &= ~S_IFMT;
 		if (inode->i_ino == superblock_bno) {
 			bh = vmufat_sb_bread(sb, inode->i_ino);
@@ -717,7 +717,7 @@ static struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 			inode->i_fop = &vmufat_file_dir_operations;
 		} else {
 			/* Mark file as regular type */
-			inode->i_mode = S_IFREG;
+			inode->i_mode = S_IFREG | S_IRUGO | S_IWUSR;
 
 			/* Scan through the directory to find matching file */
 			for (i = vmudetails->dir_bnum;
@@ -759,11 +759,11 @@ found:
 			/* Mode - is it write protected? */
 			if ((((u8 *) bh->b_data)[0x01 + offsetindir] ==
 			     0x00) & ~(sb->s_flags & MS_RDONLY))
-				inode->i_mode |= S_IWUGO;
+				inode->i_mode |= S_IWUSR;
 			/* Is file executible - ie a game */
 			if ((((u8 *) bh->b_data)[offsetindir] ==
 			     0xcc) & ~(sb->s_flags & MS_NOEXEC))
-				inode->i_mode |= S_IXUGO;
+				inode->i_mode |= S_IXUSR;
 
 			inode->i_fop = &vmufat_file_operations;
 
