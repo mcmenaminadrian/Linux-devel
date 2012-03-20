@@ -6,7 +6,7 @@
 #define VMUFAT_NAMELEN			12
 
 /* GNU utils won't list files with inode num 0 */
-#define VMUFAT_ZEROBLOCK		0xFFFF
+#define VMUFAT_ZEROBLOCK		0x10000
 #define VMU_BLK_SZ			512
 #define	VMU_BLK_SZ16			256
 
@@ -49,20 +49,16 @@
 #define NOCOPY				0xFF
 #define CANCOPY				0x00
 
-static struct kmem_cache *vmufat_inode_cachep;
-static struct kmem_cache *vmufat_blist_cachep;
 static const struct inode_operations vmufat_inode_operations;
 static const struct file_operations vmufat_file_operations;
 static const struct address_space_operations vmufat_address_space_operations;
 static const struct file_operations vmufat_file_dir_operations;
 static const struct super_operations vmufat_super_operations;
 
-static struct inode *vmufat_get_inode(struct super_block *sb, long ino);
-static int vmufat_list_blocks(struct inode *in);
-
-/* Linear day numbers of the respective 1sts in non-leap years. */
-static int day_n[] =
-	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+u16 vmufat_get_fat(struct super_block *sb, long block);
+void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir);
+struct inode *vmufat_get_inode(struct super_block *sb, long ino);
+int vmufat_list_blocks(struct inode *in);
 
 enum vmufat_date {
 	VMUFAT_DIR_CENT	=		0x10,
@@ -111,7 +107,7 @@ inline static struct vmufat_inode *VMUFAT_I(struct inode *in)
 
 struct vmufat_file_info {
 	u8 ftype;
-	u16 fblk;
+	int fblk;
 	char fname[VMUFAT_NAMELEN];
 };
 
