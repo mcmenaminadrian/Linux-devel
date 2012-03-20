@@ -49,12 +49,6 @@
 #define NOCOPY				0xFF
 #define CANCOPY				0x00
 
-static const struct inode_operations vmufat_inode_operations;
-static const struct file_operations vmufat_file_operations;
-static const struct address_space_operations vmufat_address_space_operations;
-static const struct file_operations vmufat_file_dir_operations;
-static const struct super_operations vmufat_super_operations;
-
 u16 vmufat_get_fat(struct super_block *sb, long block);
 void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir);
 struct inode *vmufat_get_inode(struct super_block *sb, long ino);

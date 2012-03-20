@@ -32,6 +32,10 @@
 #include <linux/buffer_head.h>
 #include "vmufat.h"
 
+const struct inode_operations vmufat_inode_operations;
+const struct file_operations vmufat_file_operations;
+const struct address_space_operations vmufat_address_space_operations;
+const struct file_operations vmufat_file_dir_operations;
 struct kmem_cache *vmufat_blist_cachep;
 /* Linear day numbers of the respective 1sts in non-leap years. */
 int day_n[] =
@@ -921,7 +925,7 @@ static int vmufat_readpage(struct file *file, struct page *page)
 }
 
 
-static const struct address_space_operations
+const struct address_space_operations
 		vmufat_address_space_operations = {
 	.readpage =	vmufat_readpage,
 	.writepage =	vmufat_writepage,
@@ -929,20 +933,20 @@ static const struct address_space_operations
 	.write_end =	generic_write_end,
 };
 
-static const struct inode_operations vmufat_inode_operations = {
+const struct inode_operations vmufat_inode_operations = {
 	.lookup =	vmufat_inode_lookup,
 	.create =	vmufat_inode_create,
 	.unlink =	vmufat_unlink,
 };
 
-static const struct file_operations vmufat_file_dir_operations = {
+const struct file_operations vmufat_file_dir_operations = {
 	.owner =	THIS_MODULE,
 	.read =		generic_read_dir,
 	.readdir =	vmufat_readdir,
 	.fsync =	generic_file_fsync,
 };
 
-static const struct file_operations vmufat_file_operations = {
+const struct file_operations vmufat_file_operations = {
 	.llseek =	generic_file_llseek,
 	.read =		do_sync_read,
 	.write =	do_sync_write,
