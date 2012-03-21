@@ -9,11 +9,11 @@ It is not recommended for general use, but does not require a Dreamcast.
 All the physical VMU devices that were made were of the same size 256 blocks
 of 512 octets - 128KB in total. But the specification supports a wider range
 of sizes and the filesystem in the Linux kernel is capable of handling volumes
-of a size between 128 blocks and 4096 blocks.
+of a size between 4 blocks and 65536 blocks.
 
-The standard 256 block VMU is described below
+The standard 256 block VMU is described below:
 
-BLOCK NO	Content
+BLOCK NO	CONTENT
 0		Space used by Dreamcast
 		to save files
 199
@@ -31,7 +31,9 @@ but a Dreamcast will only use 200 of these. The Linux kernel driver prefers to
 use blocks 0 - 199 when allocating blocks to files, but will use blocks 200 -
 240 if lower numbered blocks are not available.
 
-Executible file must begin at block 0 and be stored linearly in the volume.
+An executible file (generally a game written in the native machine code of
+the VMU's microcontroller) must begin at block 0 and be stored linearly in
+the volume.
 
 DIRECTORY
 The directory contains records 32 octets long (format detail below from Marcus
@@ -57,7 +59,6 @@ Hour (eg., 20)
 Minute (eg., 49)
 Second (eg., 22)
 Day of week (Monday is 00, Sunday is 06)
-
 
 FILE ALLOCATION TABLE
 Every block in the volume is mapped to the FAT eg., block 0 of the VMU maps to
