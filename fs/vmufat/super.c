@@ -19,7 +19,6 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
-#include <asm/rtc.h>
 #include <linux/fs.h>
 #include <linux/bcd.h>
 #include <linux/rtc.h>
@@ -141,8 +140,7 @@ struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 					error = -EIO;
 					goto failed;
 				}
-				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
-				{
+				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 					if (bh->b_data[j * VMU_DIR_RECORD_LEN]
 						== 0)
 						goto notfound;
@@ -294,9 +292,8 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	if (!vmudetails)
 		return -EINVAL;
 
-	/*	As most real world devices are flash
- 	 *	we won't update the superblock every time
- 	 */
+	/* As most real world devices are flash we
+	 * won't update the superblock every time */
 	if (in->i_ino == vmudetails->sb_bnum)
 		return 0;
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
@@ -427,6 +424,9 @@ static int vmufat_fill_super(struct super_block *sb,
 		goto out;
 
 	sb_set_blocksize(sb, VMU_BLK_SZ);
+	sb->s_blocksize_bits = ilog2(VMU_BLK_SZ);
+	sb->s_magic = VMUFAT_MAGIC;
+	sb->s_op = &vmufat_super_operations;
 
 	/* 
 	 * Hardware VMUs are 256 blocks in size but
@@ -448,10 +448,6 @@ static int vmufat_fill_super(struct super_block *sb,
 	vmufat_populate_vmudata(vmudata, bh, test_sz);
 	sema_init(&vmudata->vmu_sem, 1);
 	sb->s_fs_info = vmudata;
-
-	sb->s_blocksize_bits = ilog2(VMU_BLK_SZ);
-	sb->s_magic = VMUFAT_MAGIC;
-	sb->s_op = &vmufat_super_operations;
 
 	root_i = vmufat_get_inode(sb, vmudata->sb_bnum);
 	if (!root_i) {

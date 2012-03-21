@@ -297,7 +297,7 @@ void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 	else {
 		vmufat_save_bcd_rtc(rtc, in, bh, index_to_dir);
 		rtc_class_close(rtc);
-	}	
+	}
 }
 
 static int vmufat_allocate_inode(umode_t imode,
@@ -356,7 +356,7 @@ static void vmu_handle_zeroblock(int recno, struct buffer_head *bh, int ino)
 	}
 }
 
-static void vmu_write_name(int recno, struct buffer_head *bh, char* name,
+static void vmu_write_name(int recno, struct buffer_head *bh, char *name,
 	int len)
 {
 	memset((char *) (bh->b_data + recno + VMUFAT_NAME_OFFSET), '\0',
@@ -377,7 +377,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	if (!dir || !de) {
 		error = -EINVAL;
 		goto out;
-	} 
+	}
 
 	if (de->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
@@ -578,7 +578,7 @@ int vmufat_list_blocks(struct inode *in)
 	u16 fatdata;
 	if (!in || !in->i_sb)
 		goto out;
-	
+
 	vi = VMUFAT_I(in);
 	if (!vi)
 		goto out;
