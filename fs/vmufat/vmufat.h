@@ -65,7 +65,7 @@ enum vmufat_date {
 	VMUFAT_DIR_DOW
 };
 
-/* constants for BCD conversion */ 
+/* constants for BCD conversion */
 #define SECONDS_PER_DAY			86400
 #define DAYS_PER_YEAR			365
 #define SECONDS_PER_HOUR		3600
@@ -94,7 +94,7 @@ struct vmufat_inode {
 	struct inode vfs_inode;
 };
 
-inline static struct vmufat_inode *VMUFAT_I(struct inode *in)
+static inline struct vmufat_inode *VMUFAT_I(struct inode *in)
 {
 	return container_of(in, struct vmufat_inode, vfs_inode);
 }
@@ -105,7 +105,7 @@ struct vmufat_file_info {
 	char fname[VMUFAT_NAMELEN];
 };
 
-inline static struct buffer_head *vmufat_sb_bread(struct super_block *sb,
+static inline struct buffer_head *vmufat_sb_bread(struct super_block *sb,
 	sector_t block)
 {
 	if (!sb)

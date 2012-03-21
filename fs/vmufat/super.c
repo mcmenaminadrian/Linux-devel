@@ -140,7 +140,8 @@ struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 					error = -EIO;
 					goto failed;
 				}
-				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
+				for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++)
+				{
 					if (bh->b_data[j * VMU_DIR_RECORD_LEN]
 						== 0)
 						goto notfound;
