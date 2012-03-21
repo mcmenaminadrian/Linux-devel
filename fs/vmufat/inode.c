@@ -19,7 +19,6 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
-#include <asm/rtc.h>
 #include <linux/fs.h>
 #include <linux/bcd.h>
 #include <linux/rtc.h>
@@ -38,8 +37,7 @@ const struct address_space_operations vmufat_address_space_operations;
 const struct file_operations vmufat_file_dir_operations;
 struct kmem_cache *vmufat_blist_cachep;
 /* Linear day numbers of the respective 1sts in non-leap years. */
-int day_n[] =
-	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+int day_n[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
 
 static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	struct nameidata *ignored)
@@ -147,11 +145,8 @@ static int vmufat_find_free(struct super_block *sb)
 		put_bh(bh_fat);
 	}
 out_of_loop:
-	if (found) {
-		error = (fatblk - 1 - vmudetails->fat_bnum + vmudetails->fat_len)
+	return (fatblk - 1 - vmudetails->fat_bnum + vmudetails->fat_len)
 			* VMU_BLK_SZ16 + testblk - diff;
-		return error;
-	}
 
 	printk(KERN_WARNING "VMUFAT: volume is full\n");
 	error = -ENOSPC;
