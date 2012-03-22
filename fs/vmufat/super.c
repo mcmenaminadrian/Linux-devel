@@ -43,9 +43,6 @@ extern const struct file_operations vmufat_file_dir_operations;
 static long vmufat_get_date(struct buffer_head *bh, int offset)
 {
 	int century, year, month, day, hour, minute, second;
-	if (!bh)
-		return -EINVAL;
-
 	century = bcd2bin(bh->b_data[offset++]);
 	year = bcd2bin(bh->b_data[offset++]);
 	month = bcd2bin(bh->b_data[offset++]);
@@ -74,8 +71,6 @@ static void vmufat_destroy_inode(struct inode *in)
 	struct vmufat_inode *vi;
 	struct vmufat_block_list *vb;
 	struct list_head *iter, *iter2;
-	if (!in)
-		return;
 	vi = VMUFAT_I(in);
 	if (!vi)
 		return;
@@ -96,10 +91,6 @@ struct inode *vmufat_get_inode(struct super_block *sb, long ino)
 	struct inode *inode;
 	struct memcard *vmudetails;
 	long superblock_bno;
-	if (!sb || !sb->s_fs_info) {
-		error = -EINVAL;
-		goto reterror;
-	}
 
 	vmudetails = sb->s_fs_info;
 	inode = iget_locked(sb, ino);
@@ -206,8 +197,6 @@ reterror:
 
 static void vmufat_put_super(struct super_block *sb)
 {
-	if (!sb)
-		return;
 	sb->s_dev = 0;
 	kfree(sb->s_fs_info);
 }
@@ -220,10 +209,6 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 	int i;
 	struct memcard *vmudetails;
 
-	if (!sb || !sb->s_fs_info || !kstatbuf) {
-		error = -EINVAL;
-		goto out;
-	}
 	vmudetails = sb->s_fs_info;
 
 	/* Look through the FAT */
@@ -243,16 +228,7 @@ static int vmufat_statfs(struct dentry *dentry, struct kstatfs *kstatbuf)
 	int error;
 	struct super_block *sb;
 
-	if (!dentry || !kstatbuf) {
-		error = -EINVAL;
-		goto out;
-	}
-
 	sb = dentry->d_sb;
-	if (!sb) {
-		error = -EINVAL;
-		goto out;
-	}
 	error = vmufat_count_freeblocks(sb, kstatbuf);
 	if (error)
 		goto out;
@@ -266,9 +242,6 @@ out:
 /* Remove inode from memory */
 static void vmufat_evict_inode(struct inode *in)
 {
-	if (!in)
-		return;
-
 	truncate_inode_pages(&in->i_data, 0);
 	invalidate_inode_buffers(in);
 	in->i_size = 0;
@@ -283,20 +256,16 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 {
 	struct buffer_head *bh = NULL;
 	unsigned long inode_num;
-	int i, j, found = 0;
+	int i, j, found = 0 error = 0;
 	struct super_block *sb;
 	struct memcard *vmudetails;
-	if (!in || !in->i_sb)
-		return -EINVAL;
 	sb = in->i_sb;
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails)
-		return -EINVAL;
 
 	/* As most real world devices are flash we
 	 * won't update the superblock every time */
 	if (in->i_ino == vmudetails->sb_bnum)
-		return 0;
+		goto out;
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
 		inode_num = 0;
 	else
@@ -310,13 +279,15 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
 			up(&vmudetails->vmu_sem);
-			return -EIO;
+			error = -EIO;
+			goto out;
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 			if (bh->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
 				up(&vmudetails->vmu_sem);
 				brelse(bh);
-				return -ENOENT;
+				error = -ENOENT;
+				goto out;
 			}
 			if (le16_to_cpu(((u16 *)bh->b_data)
 				[j * VMU_DIR_RECORD_LEN16 +
@@ -330,7 +301,8 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 found:
 	if (found == 0) {
 		up(&vmudetails->vmu_sem);
-		return -EIO;
+		error = -EIO;
+		goto out;
 	}
 
 	/* Have the directory entry
@@ -349,24 +321,23 @@ found:
 	in->i_mtime = CURRENT_TIME;
 	vmufat_save_bcd(in, bh->b_data, j * VMU_DIR_RECORD_LEN);
 
-	((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + 0x0C] =
+	((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + VMUFAT_SIZE_OFFSET16] =
 		cpu_to_le16(in->i_blocks);
 	if (inode_num != 0)
-		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + 0x0D] = 0;
+		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 +
+			VMUFAT_HEADER_OFFSET16] = 0;
 	else /* game */
-		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + 0x0D] =
-			cpu_to_le16(1);
+		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 +
+			VMUFAT_HEADER_OFFSET16] = cpu_to_le16(1);
 	up(&vmudetails->vmu_sem);
 	mark_buffer_dirty(bh);
 	brelse(bh);
-	return 0;
+out:
+	return error;
 }
 
 static int check_sb_format(struct buffer_head *bh)
 {
-	if (!bh)
-		return -EINVAL;
-
 	return (((u32 *) bh->b_data)[0] == VMUFAT_MAGIC &&
 		((u32 *) bh->b_data)[1] == VMUFAT_MAGIC &&
 		((u32 *) bh->b_data)[2] == VMUFAT_MAGIC &&
@@ -420,9 +391,7 @@ static int vmufat_fill_super(struct super_block *sb,
 	struct memcard *vmudata;
 	int test_sz;
 	struct inode *root_i;
-	int ret = -EINVAL;
-	if (!sb)
-		goto out;
+	int ret = 0;
 
 	sb_set_blocksize(sb, VMU_BLK_SZ);
 	sb->s_blocksize_bits = ilog2(VMU_BLK_SZ);
@@ -465,12 +434,11 @@ static int vmufat_fill_super(struct super_block *sb,
 	}
 
 	sb->s_root = d_alloc_root(root_i);
-
 	if (!sb->s_root) {
 		ret = -EIO;
 		goto freeroot_out;
 	}
-	return 0;
+	else goto out;
 
 freeroot_out:
 	iput(root_i);
