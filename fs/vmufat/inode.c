@@ -44,9 +44,8 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 {
 	struct super_block *sb;
 	struct memcard *vmudetails;
-	struct buffer_head *bufhead = NULL;
+	struct buffer_head *bh = NULL;
 	struct inode *ino;
-	char name[VMUFAT_NAMELEN];
 	int i, j, error = 0;
 
 	if (dent->d_name.len > VMUFAT_NAMELEN) {
@@ -58,30 +57,29 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 
 	for (i = vmudetails->dir_bnum;
 		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
-		brelse(bufhead);
-		bufhead = vmufat_sb_bread(sb, i);
-		if (!bufhead) {
+		brelse(bh);
+		bh = vmufat_sb_bread(sb, i);
+		if (!bh) {
 			error = -EIO;
 			goto out;
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
-			if (bufhead->b_data[j * VMU_DIR_RECORD_LEN] == 0)
+			int record_offset = j * VMU_DIR_RECORD_LEN;
+			if (bh->b_data[record_offset] == 0)
 				goto fail;
-			/* get name and check for match */
-			memcpy(name,
-				bufhead->b_data + j * VMU_DIR_RECORD_LEN
-				+ VMUFAT_NAME_OFFSET, VMUFAT_NAMELEN);
-			if (memcmp(dent->d_name.name, name,
-				dent->d_name.len) == 0) {
+			if (memcmp(dent->d_name.name,
+			bh->b_data + record_offset + VMUFAT_NAME_OFFSET,
+			dent->d_name.len) == 0) {
 				ino = vmufat_get_inode(sb,
-					le16_to_cpu(((u16 *) bufhead->b_data)
-					[j * VMU_DIR_RECORD_LEN16
+					le16_to_cpu(((u16 *) bh->b_data)
+					[record_offset
 					+ VMUFAT_FIRSTBLOCK_OFFSET16]));
-				if (IS_ERR_OR_NULL(ino)) {
-					if (IS_ERR(ino))
-						error = PTR_ERR(ino);
-					else
-						error = -EACCES;
+				if (IS_ERR(ino)) {
+					error = PTR_ERR(ino);
+					goto out;
+				}
+				else if (!ino) {
+					error = -EACCES;
 					goto out;
 				}
 				d_add(dent, ino);
@@ -92,9 +90,25 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 fail:
 	d_add(dent, NULL); /* Did not find the file */
 out:
-	brelse(bufhead);
+	brelse(bh);
 	return ERR_PTR(error);
 }
+
+static int vmufat_get_freeblock(int start, int end, struct buffer_head *bh)
+{
+	int i, ret = -1;
+	__le16 fatdata;
+
+	for (i = start; i >= end; i--) {
+		fatdata = le16_to_cpu(((u16 *)bh->b_data)[i]);
+		if (i == VMUFAT_UNALLOCATED) {
+			ret = i;
+			goto out;
+		}
+	}
+out:
+	return ret;
+}	
 
 /*
  * Find a block marked free in the FAT
@@ -102,7 +116,7 @@ out:
 static int vmufat_find_free(struct super_block *sb)
 {
 	struct memcard *vmudetails;
-	int found = 0, testblk, fatblk, error, index_to_fat;
+	int found = 0, testblk, fatblk, ret;
 	int diff;
 	__le16 fatdata;
 	struct buffer_head *bh_fat;
@@ -114,36 +128,40 @@ static int vmufat_find_free(struct super_block *sb)
 		fatblk--) {
 		bh_fat = vmufat_sb_bread(sb, fatblk);
 		if (!bh_fat) {
-			error = -EIO;
+			ret = -EIO;
 			goto fail;
 		}
 
-		index_to_fat = 0xFF;
-		/* prefer not to allocate to higher blocks if we can
-		 * to ensure full compatibility with Dreamcast devices */
-		diff = index_to_fat - VMUFAT_START_ALLOC;
-		for (testblk = index_to_fat; testblk > 0; testblk--) {
-			if (diff > 0 && testblk - diff < 0)
-				diff = -VMUFAT_START_ALLOC - 1;
-			fatdata =
-				le16_to_cpu(((u16 *) bh_fat->b_data)
-				[testblk - diff]);
-			if (fatdata == VMUFAT_UNALLOCATED) {
-				found = 1;
+		/* Handle small VMUs like physical devices
+		 * and large VMUS more simply
+		 */
+		if (vmudetails->sb_bnum != VMU_BLK_SZ16) {
+			/* Cannot be physical VMU */
+			testblk = vmufat_get_freeblock(VMU_BLK_SZ16, 0, bh_fat);
+			put_bh(bh_fat);
+			if (testblk >= 0) 
+				goto out_of_loop;
+		} else { /* Physical VMU or virtual VMU with same size */
+			testblk = vmufat_get_freeblock(VMUFAT_START_ALLOC, 0, bh_fat);
+			if (testblk >= 0) {
 				put_bh(bh_fat);
 				goto out_of_loop;
 			}
+			testblk = vmufat_get_freeblock(VMU_BLK_SZ16, VMUFAT_START_ALLOC + 1, bh_fat)
+			put_bh(bh_fat);
+			if (testblk > VMUFAT_START_ALLOC)
+				goto out_of_loop;
 		}
-		put_bh(bh_fat);
 	}
-out_of_loop:
-	return (fatblk - 1 - vmudetails->fat_bnum + vmudetails->fat_len)
-			* VMU_BLK_SZ16 + testblk - diff;
+	printk(KERN_INFO "VMUFAT: volume is full\n");
+	ret = -ENOSPC;
+	goto fail;
 
-	printk(KERN_WARNING "VMUFAT: volume is full\n");
-	error = -ENOSPC;
+out_of_loop:
+	ret = (fatblk - 1 - vmudetails->fat_bnum + vmudetails->fat_len)
+			* VMU_BLK_SZ16 + testblk;
 fail:
-	return error;
+	return ret;
 }
 
 /* read the FAT for a given block */
