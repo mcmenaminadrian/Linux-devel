@@ -47,18 +47,14 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 	struct buffer_head *bufhead = NULL;
 	struct inode *ino;
 	char name[VMUFAT_NAMELEN];
-	int i, j, error = -EINVAL;
-	if (!dent || !in || !in->i_sb)
-		goto out;
+	int i, j, error = 0;
+
 	if (dent->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
 		goto out;
 	}
 	sb = in->i_sb;
-	if (!sb->s_fs_info)
-		goto out;
 	vmudetails = sb->s_fs_info;
-	error = 0;
 
 	for (i = vmudetails->dir_bnum;
 		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
@@ -111,10 +107,6 @@ static int vmufat_find_free(struct super_block *sb)
 	__le16 fatdata;
 	struct buffer_head *bh_fat;
 
-	if (!sb || !sb->s_fs_info) {
-		error = -EINVAL;
-		goto fail;
-	}
 	vmudetails = sb->s_fs_info;
 
 	for (fatblk = vmudetails->fat_bnum;
@@ -161,8 +153,7 @@ u16 vmufat_get_fat(struct super_block *sb, long block)
 	int offset;
 	u16 block_content = VMUFAT_ERROR;
 	struct memcard *vmudetails;
-	if (!sb || !sb->s_fs_info)
-		goto out;
+	
 	vmudetails = sb->s_fs_info;
 
 	/* which block in the FAT */
@@ -190,10 +181,7 @@ static int vmufat_set_fat(struct super_block *sb, long block,
 	struct buffer_head *bh;
 	int offset, error = 0;
 	struct memcard *vmudetails;
-	if (!sb || !sb->s_fs_info) {
-		error = -EINVAL;
-		goto out;
-	}
+	
 	vmudetails = sb->s_fs_info;
 
 	offset = block / VMU_BLK_SZ16;
@@ -211,7 +199,7 @@ static int vmufat_set_fat(struct super_block *sb, long block,
 	mark_buffer_dirty(bh);
 	put_bh(bh);
 out:
-	return 0;
+	return error;
 }
 
 
@@ -303,19 +291,16 @@ void vmufat_save_bcd(struct inode *in, char *bh, int index_to_dir)
 static int vmufat_allocate_inode(umode_t imode,
 		struct super_block *sb, struct inode *in)
 {
-	int error;
-	if (!sb || !in)
-		return -EINVAL;
+	int error = 0;
 	/* Executable files must be at the start of the volume */
 	if (imode & EXEC) {
 		in->i_ino = VMUFAT_ZEROBLOCK;
 		if (vmufat_get_fat(sb, 0) != VMUFAT_UNALLOCATED) {
-			printk(KERN_WARNING "VMUFAT: cannot write excutable "
+			printk(KERN_INFO "VMUFAT: cannot write excutable "
 				"file. Volume block 0 already allocated.\n");
 			error = -ENOSPC;
 			goto out;
 		}
-		error = 0;
 	} else {
 		error = vmufat_find_free(sb);
 		if (error >= 0)
@@ -328,9 +313,6 @@ out:
 static void vmufat_setup_inode(struct inode *in, umode_t imode,
 		struct super_block *sb)
 {
-	if (!in)
-		return;
-
 	in->i_uid = current_fsuid();
 	in->i_gid = current_fsgid();
 	in->i_mtime = in->i_atime = in->i_ctime = CURRENT_TIME;
@@ -374,10 +356,6 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	struct buffer_head *bh = NULL;
-	if (!dir || !de) {
-		error = -EINVAL;
-		goto out;
-	}
 
 	if (de->d_name.len > VMUFAT_NAMELEN) {
 		error = -ENAMETOOLONG;
@@ -385,10 +363,6 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	}
 
 	sb = dir->i_sb;
-	if (!sb || !sb->s_fs_info) {
-		error = -EINVAL;
-		goto out;
-	}
 	vmudetails = sb->s_fs_info;
 
 	inode = new_inode(sb);
@@ -478,30 +452,19 @@ out:
 
 static int vmufat_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	int filenamelen, index, j, k, error = -EINVAL;
+	int filenamelen, index, j, k, error = 0;
 	struct vmufat_file_info *saved_file = NULL;
 	struct dentry *dentry;
 	struct inode *inode;
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	struct buffer_head *bh = NULL;
-	if (!filp || !filp->f_dentry)
-		goto out;
+
 	dentry = filp->f_dentry;
 	inode = dentry->d_inode;
-	if (!inode)
-		goto out;
 	sb = inode->i_sb;
-	if (!sb)
-		goto out;
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails)
-		goto out;
-	error = 0;
-
 	index = filp->f_pos;
-	if (index > 200)
-		return -EIO;
 	/* handle . for this directory and .. for parent */
 	switch ((unsigned int) filp->f_pos) {
 	case 0:
@@ -576,8 +539,6 @@ int vmufat_list_blocks(struct inode *in)
 	struct list_head *iter, *iter2;
 	struct vmufat_block_list *vbl, *nvbl;
 	u16 fatdata;
-	if (!in || !in->i_sb)
-		goto out;
 
 	vi = VMUFAT_I(in);
 	if (!vi)
@@ -585,8 +546,6 @@ int vmufat_list_blocks(struct inode *in)
 	sb = in->i_sb;
 	ino = in->i_ino;
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails)
-		goto out;
 	error = 0;
 	nextblock = ino;
 	if (nextblock == VMUFAT_ZEROBLOCK)
@@ -638,10 +597,6 @@ static int vmufat_clean_fat(struct super_block *sb, int inum)
 {
 	int error = 0;
 	u16 fatword, nextword;
-	if (!sb) {
-		error = -EINVAL;
-		goto out;
-	}
 
 	nextword = inum;
 	do {
@@ -672,17 +627,13 @@ static void vmufat_remove_inode(struct inode *in)
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	int i, j, k, l, startpt, found = 0;
-	if (!in || !in->i_sb)
-		goto ret;
 
 	if (in->i_ino == VMUFAT_ZEROBLOCK)
 		in->i_ino = 0;
 	sb = in->i_sb;
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails)
-		goto ret;
 	if (in->i_ino > vmudetails->fat_len * sb->s_blocksize / 2) {
-		printk(KERN_ERR "VMUFAT: attempting to delete"
+		printk(KERN_WARNING "VMUFAT: attempting to delete"
 			"inode beyond device size");
 		goto ret;
 	}
@@ -780,7 +731,7 @@ finish:
 	return;
 
 failure:
-	printk(KERN_ERR "VMUFAT: Failure to read volume,"
+	printk(KERN_WARNING "VMUFAT: Failure to read volume,"
 		" could not delete inode - filesystem may be damaged\n");
 ret:
 	return;
@@ -795,8 +746,6 @@ ret:
 static int vmufat_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct inode *in;
-	if (!dentry || !dentry->d_inode)
-		return -EINVAL;
 	in = dentry->d_inode;
 	vmufat_remove_inode(in);
 	return 0;
@@ -815,19 +764,14 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	sector_t cntdwn = iblock;
 	sector_t phys;
 	int error = -EINVAL;
-	if (!inode || !inode->i_sb)
-		goto out;
+
 	vin = VMUFAT_I(inode);
-	if (!vin || !(&vin->blocks))
+	if (!vin || !(&vin->blocks) || vin->nblcks <= 0)
 		goto out;
 	vlist = &vin->blocks;
 	sb = inode->i_sb;
 	vmudetails = sb->s_fs_info;
-	if (!vmudetails)
-		goto out;
 
-	if (vin->nblcks <= 0)
-		goto out;
 	if (iblock < vin->nblcks) {
 		/* block is already here so read it into the buffer head */
 		list_for_each(iter, &vlist->b_list) {
