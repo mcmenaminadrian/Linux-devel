@@ -116,9 +116,7 @@ out:
 static int vmufat_find_free(struct super_block *sb)
 {
 	struct memcard *vmudetails;
-	int found = 0, testblk, fatblk, ret;
-	int diff;
-	__le16 fatdata;
+	int testblk, fatblk, ret;
 	struct buffer_head *bh_fat;
 
 	vmudetails = sb->s_fs_info;
@@ -133,7 +131,7 @@ static int vmufat_find_free(struct super_block *sb)
 		}
 
 		/* Handle small VMUs like physical devices
-		 * and large VMUS more simply
+		 * and large VMUs more simply
 		 */
 		if (vmudetails->sb_bnum != VMU_BLK_SZ16) {
 			/* Cannot be physical VMU */
@@ -141,13 +139,16 @@ static int vmufat_find_free(struct super_block *sb)
 			put_bh(bh_fat);
 			if (testblk >= 0) 
 				goto out_of_loop;
-		} else { /* Physical VMU or virtual VMU with same size */
-			testblk = vmufat_get_freeblock(VMUFAT_START_ALLOC, 0, bh_fat);
+		} else { /* Physical VMU or logical VMU with same size */
+			testblk = vmufat_get_freeblock(VMUFAT_START_ALLOC, 0,
+				bh_fat);
 			if (testblk >= 0) {
 				put_bh(bh_fat);
 				goto out_of_loop;
 			}
-			testblk = vmufat_get_freeblock(VMU_BLK_SZ16, VMUFAT_START_ALLOC + 1, bh_fat)
+			/* Only allocate to higher blocks if no space left */
+			testblk = vmufat_get_freeblock(VMU_BLK_SZ16,
+				VMUFAT_START_ALLOC + 1, bh_fat);
 			put_bh(bh_fat);
 			if (testblk > VMUFAT_START_ALLOC)
 				goto out_of_loop;
