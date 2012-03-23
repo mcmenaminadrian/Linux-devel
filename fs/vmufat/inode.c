@@ -349,11 +349,12 @@ static void vmu_handle_zeroblock(int recno, struct buffer_head *bh, int ino)
 	/* offset and header offset settings */
 	if (ino != VMUFAT_ZEROBLOCK) {
 		((u16 *) bh->b_data)[recno + VMUFAT_START_OFFSET16] =
-		    cpu_to_le16(ino);
+			cpu_to_le16(ino);
 		((u16 *) bh->b_data)[recno + VMUFAT_HEADER_OFFSET16] = 0;
 	} else {
 		((u16 *) bh->b_data)[recno + VMUFAT_START_OFFSET16] = 0;
-		((u16 *) bh->b_data)[recno + VMUFAT_HEADER_OFFSET16] = 1;
+		((u16 *) bh->b_data)[recno + VMUFAT_HEADER_OFFSET16] =
+			cpu_to_le16(1);
 	}
 }
 
@@ -376,14 +377,8 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	struct memcard *vmudetails;
 	struct buffer_head *bh = NULL;
 
-	if (de->d_name.len > VMUFAT_NAMELEN) {
-		error = -ENAMETOOLONG;
-		goto out;
-	}
-
 	sb = dir->i_sb;
 	vmudetails = sb->s_fs_info;
-
 	inode = new_inode(sb);
 	if (!inode) {
 		error = -ENOSPC;
