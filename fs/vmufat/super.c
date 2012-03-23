@@ -204,12 +204,8 @@ static void vmufat_put_super(struct super_block *sb)
 static int vmufat_count_freeblocks(struct super_block *sb,
 					struct kstatfs *kstatbuf)
 {
-	int error = 0;
-	int free = 0;
-	int i;
-	struct memcard *vmudetails;
-
-	vmudetails = sb->s_fs_info;
+	int i, free = 0, error = 0;
+	struct memcard *vmudetails = sb->s_fs_info;
 
 	/* Look through the FAT */
 	for (i = 0; i < vmudetails->numblocks; i++) {
@@ -219,7 +215,6 @@ static int vmufat_count_freeblocks(struct super_block *sb,
 	kstatbuf->f_bfree = free;
 	kstatbuf->f_bavail = free;
 	kstatbuf->f_blocks = vmudetails->numblocks;
-out:
 	return error;
 }
 
@@ -256,7 +251,7 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 {
 	struct buffer_head *bh = NULL;
 	unsigned long inode_num;
-	int i, j, found = 0 error = 0;
+	int i, j, found = 0, error = 0;
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	sb = in->i_sb;
