@@ -371,7 +371,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		umode_t imode, struct nameidata *nd)
 {
 	/* Create an inode */
-	int i, j, found = 0, error = 0, freeblock;
+	int i, j, entry, found = 0, error = 0, freeblock;
 	struct inode *inode;
 	struct super_block *sb;
 	struct memcard *vmudetails;
@@ -423,25 +423,25 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	if (found == 0)
 		goto clean_fat;
 dir_space_found:
-	j = j * VMU_DIR_RECORD_LEN;
+	entry = j * VMU_DIR_RECORD_LEN;
 	/* Have the directory entry
 	 * so now update it */
 	if (imode & EXEC)
-		bh->b_data[j] = VMU_GAME;	/* exec file */
+		bh->b_data[entry] = VMU_GAME;
 	else
-		bh->b_data[j] = VMU_DATA;
+		bh->b_data[entry] = VMU_DATA;
 
 	/* copy protection settings */
-	if (bh->b_data[j + 1] != (char) NOCOPY)
-		bh->b_data[j + 1] = (char) CANCOPY;
+	if (bh->b_data[entry + 1] != (char) NOCOPY)
+		bh->b_data[entry + 1] = (char) CANCOPY;
 
-	vmu_handle_zeroblock(j / 2, bh, inode->i_ino);
-	vmu_write_name(j, bh, (char *) de->d_name.name, de->d_name.len);
+	vmu_handle_zeroblock(entry / 2, bh, inode->i_ino);
+	vmu_write_name(entry, bh, (char *) de->d_name.name, de->d_name.len);
 
 	/* BCD timestamp it */
-	vmufat_save_bcd(inode, bh->b_data, j);
+	vmufat_save_bcd(inode, bh->b_data, entry);
 
-	((u16 *) bh->b_data)[j / 2 + VMUFAT_SIZE_OFFSET16] =
+	((u16 *) bh->b_data)[entry / 2 + VMUFAT_SIZE_OFFSET16] =
 	    cpu_to_le16(inode->i_blocks);
 	mark_buffer_dirty(bh);
 	brelse(bh);
@@ -459,7 +459,7 @@ clean_inode:
 	iput(inode);
 out:
 	if (error < 0)
-		printk(KERN_ERR "VMUFAT: inode creation fails with error"
+		printk(KERN_INFO "VMUFAT: inode creation fails with error"
 			" %i\n", error);
 	return error;
 }
@@ -807,7 +807,7 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	if (iblock > vin->nblcks)
 		goto out;
 
-	/* if looking for a block that is not current - allocate it*/
+	/* if looking for a block that is not current - allocate it */
 	cural = vin->nblcks;
 	list_for_each(iter, &vlist->b_list) {
 		if (cural-- == 1)
