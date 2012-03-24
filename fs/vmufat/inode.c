@@ -77,8 +77,7 @@ static struct dentry *vmufat_inode_lookup(struct inode *in, struct dentry *dent,
 				if (IS_ERR(ino)) {
 					error = PTR_ERR(ino);
 					goto out;
-				}
-				else if (!ino) {
+				} else if (!ino) {
 					error = -EACCES;
 					goto out;
 				}
@@ -107,7 +106,7 @@ static int vmufat_get_freeblock(int start, int end, struct buffer_head *bh)
 		}
 	}
 	return ret;
-}	
+}
 
 /*
  * Find a block marked free in the FAT
@@ -136,7 +135,7 @@ static int vmufat_find_free(struct super_block *sb)
 			/* Cannot be physical VMU */
 			testblk = vmufat_get_freeblock(VMU_BLK_SZ16, 0, bh_fat);
 			put_bh(bh_fat);
-			if (testblk >= 0) 
+			if (testblk >= 0)
 				goto out_of_loop;
 		} else { /* Physical VMU or logical VMU with same size */
 			testblk = vmufat_get_freeblock(VMUFAT_START_ALLOC, 0,
@@ -170,9 +169,7 @@ u16 vmufat_get_fat(struct super_block *sb, long block)
 	struct buffer_head *bufhead;
 	int offset;
 	u16 block_content = VMUFAT_ERROR;
-	struct memcard *vmudetails;
-	
-	vmudetails = sb->s_fs_info;
+	struct memcard *vmudetails = sb->s_fs_info;
 
 	/* which block in the FAT */
 	offset = block / VMU_BLK_SZ16;
@@ -198,9 +195,7 @@ static int vmufat_set_fat(struct super_block *sb, long block,
 {
 	struct buffer_head *bh;
 	int offset, error = 0;
-	struct memcard *vmudetails;
-	
-	vmudetails = sb->s_fs_info;
+	struct memcard *vmudetails = sb->s_fs_info;
 
 	offset = block / VMU_BLK_SZ16;
 	if (offset >= vmudetails->fat_len) {
