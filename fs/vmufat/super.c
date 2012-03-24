@@ -252,6 +252,7 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	struct buffer_head *bh = NULL;
 	unsigned long inode_num;
 	int i, j, found = 0, error = 0;
+	int pos, pos16;
 	struct super_block *sb;
 	struct memcard *vmudetails;
 	sb = in->i_sb;
@@ -278,15 +279,17 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 			goto out;
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
-			if (bh->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
+			pos = j * VMU_DIR_RECORD_LEN;
+			pos16 = j * VMU_DIR_RECORD_LEN16;
+			if (bh->b_data[pos] == 0) {
 				up(&vmudetails->mutex);
 				brelse(bh);
 				error = -ENOENT;
 				goto out;
 			}
 			if (le16_to_cpu(((u16 *)bh->b_data)
-				[j * VMU_DIR_RECORD_LEN16 +
-				VMUFAT_FIRSTBLOCK_OFFSET16]) == inode_num) {
+				[pos16 + VMUFAT_FIRSTBLOCK_OFFSET16])
+				== inode_num) {
 				found = 1;
 				goto found;
 			}
@@ -303,27 +306,24 @@ found:
 	/* Have the directory entry
 	 * so now update it */
 	if (inode_num != 0)
-		bh->b_data[j * VMU_DIR_RECORD_LEN] = VMU_DATA;	/* data file */
+		bh->b_data[pos] = VMU_DATA;	/* data file */
 	else
-		bh->b_data[j * VMU_DIR_RECORD_LEN] = VMU_GAME;
-	if (bh->b_data[j * VMU_DIR_RECORD_LEN + 1] !=  0
-	    && bh->b_data[j * VMU_DIR_RECORD_LEN + 1] != (char) 0xff)
-		bh->b_data[j * VMU_DIR_RECORD_LEN + 1] = 0;
-	((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + 1] =
-		cpu_to_le16(inode_num);
+		bh->b_data[pos] = VMU_GAME;
+	if (bh->b_data[pos + 1] !=  0 && bh->b_data[pos + 1] != (char) 0xff)
+		bh->b_data[pos + 1] = 0;
+	((u16 *) bh->b_data)[pos16 + 1] = cpu_to_le16(inode_num);
 
 	/* BCD timestamp it */
 	in->i_mtime = CURRENT_TIME;
-	vmufat_save_bcd(in, bh->b_data, j * VMU_DIR_RECORD_LEN);
+	vmufat_save_bcd(in, bh->b_data, pos);
 
-	((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 + VMUFAT_SIZE_OFFSET16] =
+	((u16 *) bh->b_data)[pos16 + VMUFAT_SIZE_OFFSET16] =
 		cpu_to_le16(in->i_blocks);
 	if (inode_num != 0)
-		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 +
-			VMUFAT_HEADER_OFFSET16] = 0;
+		((u16 *) bh->b_data)[pos16 + VMUFAT_HEADER_OFFSET16] = 0;
 	else /* game */
-		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 +
-			VMUFAT_HEADER_OFFSET16] = cpu_to_le16(1);
+		((u16 *) bh->b_data)[pos16 + VMUFAT_HEADER_OFFSET16]
+			= cpu_to_le16(1);
 	up(&vmudetails->mutex);
 	mark_buffer_dirty(bh);
 	brelse(bh);
