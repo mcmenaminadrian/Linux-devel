@@ -509,17 +509,19 @@ static int vmufat_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		}
 		for (k = (index - 2) % VMU_DIR_ENTRIES_PER_BLOCK;
 			k < VMU_DIR_ENTRIES_PER_BLOCK; k++) {
-			saved_file->ftype = bh->b_data[k * VMU_DIR_RECORD_LEN];
+			int pos, pos16;
+			pos = k * VMU_DIR_RECORD_LEN;
+			pos16 = k * VMU_DIR_RECORD_LEN16;
+			saved_file->ftype = bh->b_data[pos];
 			if (saved_file->ftype == 0)
 				goto finish;
 			saved_file->fblk =
-				le16_to_cpu(((u16 *) bh->b_data)
-				[k * VMU_DIR_RECORD_LEN16 + 1]);
+				le16_to_cpu(((u16 *) bh->b_data)[pos16 + 1]);
 			if (saved_file->fblk == 0)
 				saved_file->fblk = VMUFAT_ZEROBLOCK;
 			memcpy(saved_file->fname,
-				bh->b_data + k * VMU_DIR_RECORD_LEN
-				+ VMUFAT_NAME_OFFSET, VMUFAT_NAMELEN);
+				bh->b_data + pos + VMUFAT_NAME_OFFSET,
+				VMUFAT_NAMELEN);
 			filenamelen = strlen(saved_file->fname);
 			if (filenamelen > VMUFAT_NAMELEN)
 				filenamelen = VMUFAT_NAMELEN;
@@ -590,7 +592,7 @@ int vmufat_list_blocks(struct inode *in)
 			goto unwind_out;
 		}
 		if (fatdata == VMUFAT_FILE_END)
-			break;	/*end of file */
+			break;
 		nextblock = fatdata;
 	} while (1);
 out:
@@ -614,16 +616,16 @@ static int vmufat_clean_fat(struct super_block *sb, int inum)
 		fatword = vmufat_get_fat(sb, nextword);
 		if (fatword == VMUFAT_ERROR) {
 			error = -EIO;
-			goto out;
+			break;
 		}
 		error = vmufat_set_fat(sb, nextword, VMUFAT_UNALLOCATED);
 		if (error)
-			goto out;
+			break;
 		if (fatword == VMUFAT_FILE_END)
-			goto out;
+			break;
 		nextword = fatword;
 	} while (1);
-out:
+
 	return error;
 }
 
