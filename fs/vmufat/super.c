@@ -433,7 +433,7 @@ static int vmufat_fill_super(struct super_block *sb,
 		ret = -EIO;
 		goto freeroot_out;
 	}
-	else goto out;
+	goto out;
 
 freeroot_out:
 	iput(root_i);
