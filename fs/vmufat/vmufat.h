@@ -80,7 +80,7 @@ struct memcard {
 	unsigned int dir_bnum;
 	unsigned int dir_len;
 	unsigned int numblocks;
-	struct semaphore vmu_sem;
+	struct mutex mutex;
 };
 
 struct vmufat_block_list {

@@ -268,18 +268,18 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 
 	/* update the directory and inode details */
 	/* Now search for the directory entry */
-	down_interruptible(&vmudetails->vmu_sem);
+	down(&vmudetails->mutex);
 	for (i = vmudetails->dir_bnum;
 		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
-			up(&vmudetails->vmu_sem);
+			up(&vmudetails->mutex);
 			error = -EIO;
 			goto out;
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 			if (bh->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
-				up(&vmudetails->vmu_sem);
+				up(&vmudetails->mutex);
 				brelse(bh);
 				error = -ENOENT;
 				goto out;
@@ -295,7 +295,7 @@ static int vmufat_write_inode(struct inode *in, struct writeback_control *wbc)
 	}
 found:
 	if (found == 0) {
-		up(&vmudetails->vmu_sem);
+		up(&vmudetails->mutex);
 		error = -EIO;
 		goto out;
 	}
@@ -324,7 +324,7 @@ found:
 	else /* game */
 		((u16 *) bh->b_data)[j * VMU_DIR_RECORD_LEN16 +
 			VMUFAT_HEADER_OFFSET16] = cpu_to_le16(1);
-	up(&vmudetails->vmu_sem);
+	up(&vmudetails->mutex);
 	mark_buffer_dirty(bh);
 	brelse(bh);
 out:
@@ -411,7 +411,7 @@ static int vmufat_fill_super(struct super_block *sb,
 		goto freebh_out;
 	}
 	vmufat_populate_vmudata(vmudata, bh, test_sz);
-	sema_init(&vmudata->vmu_sem, 1);
+	mutex_init(&vmudata->mutex);
 	sb->s_fs_info = vmudata;
 
 	root_i = vmufat_get_inode(sb, vmudata->sb_bnum);
