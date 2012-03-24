@@ -306,7 +306,7 @@ found:
 	/* Have the directory entry
 	 * so now update it */
 	if (inode_num != 0)
-		bh->b_data[pos] = VMU_DATA;	/* data file */
+		bh->b_data[pos] = VMU_DATA;
 	else
 		bh->b_data[pos] = VMU_GAME;
 	if (bh->b_data[pos + 1] !=  0 && bh->b_data[pos + 1] != (char) 0xff)
@@ -351,7 +351,7 @@ static void vmufat_populate_vmudata(struct memcard *vmudata,
 		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_DIR]);
 	vmudata->dir_len =
 		le16_to_cpu(((u16 *) bh->b_data)[VMU_LOCATION_DIRLEN]);
-	/* return the true number of user available blocks - VMUs
+	/* return the true number of user available blocks - physical VMUs
  	 * return a neat 200 and ignore 40 blocks of usable space -
  	 * we get round that in a hardware neutral way */
 	vmudata->numblocks = vmudata->dir_bnum - vmudata->dir_len + 1;
