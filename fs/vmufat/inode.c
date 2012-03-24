@@ -103,10 +103,9 @@ static int vmufat_get_freeblock(int start, int end, struct buffer_head *bh)
 		fatdata = le16_to_cpu(((u16 *)bh->b_data)[i]);
 		if (fatdata == VMUFAT_UNALLOCATED) {
 			ret = i;
-			goto out;
+			break;
 		}
 	}
-out:
 	return ret;
 }	
 
@@ -130,8 +129,8 @@ static int vmufat_find_free(struct super_block *sb)
 			goto fail;
 		}
 
-		/* Handle small VMUs like physical devices
-		 * and large VMUs more simply
+		/* Handle 256 block VMUs like physical devices
+		 * and other VMUs more simply
 		 */
 		if (vmudetails->sb_bnum != VMU_BLK_SZ16) {
 			/* Cannot be physical VMU */
@@ -370,7 +369,6 @@ static void vmu_write_name(int recno, struct buffer_head *bh, char *name,
 static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		umode_t imode, struct nameidata *nd)
 {
-	/* Create an inode */
 	int i, j, entry, found = 0, error = 0, freeblock;
 	struct inode *inode;
 	struct super_block *sb;
@@ -402,7 +400,7 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 
 	/* Write to the directory
 	 * Now search for space for the directory entry */
-	down_interruptible(&vmudetails->mutex);
+	down(&vmudetails->mutex);
 	for (i = vmudetails->dir_bnum;
 		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		brelse(bh);
@@ -413,8 +411,8 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 			goto clean_fat;
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
-			if (((bh->b_data)[j * VMU_DIR_RECORD_LEN]) == 0) {
-				up(&vmudetails->mutex);
+			entry = j * VMU_DIR_RECORD_LEN;
+			if (((bh->b_data)[entry]) == 0) {
 				found = 1;
 				goto dir_space_found;
 			}
@@ -423,7 +421,6 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 	if (found == 0)
 		goto clean_fat;
 dir_space_found:
-	entry = j * VMU_DIR_RECORD_LEN;
 	/* Have the directory entry
 	 * so now update it */
 	if (imode & EXEC)
