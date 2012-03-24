@@ -383,16 +383,16 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 		goto out;
 	}
 
-	down(&vmudetails->mutex);
+	mutex_lock(&vmudetails->mutex);
 	freeblock = vmufat_allocate_inode(imode, sb, inode);
 	if (freeblock < 0) {
-		up(&vmudetails->mutex);
+		mutex_unlock(&vmudetails->mutex);
 		error = freeblock;
 		goto clean_inode;
 	}
 	/* mark as single block file - may grow later */
 	error = vmufat_set_fat(sb, freeblock, VMUFAT_FILE_END);
-	up(&vmudetails->mutex);
+	mutex_unlock(&vmudetails->mutex);
 	if (error)
 		goto clean_inode;
 
@@ -400,13 +400,13 @@ static int vmufat_inode_create(struct inode *dir, struct dentry *de,
 
 	/* Write to the directory
 	 * Now search for space for the directory entry */
-	down(&vmudetails->mutex);
+	mutex_lock(&vmudetails->mutex);
 	for (i = vmudetails->dir_bnum;
 		i > vmudetails->dir_bnum - vmudetails->dir_len; i--) {
 		brelse(bh);
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
-			up(&vmudetails->mutex);
+			mutex_unlock(&vmudetails->mutex);
 			error = -EIO;
 			goto clean_fat;
 		}
@@ -445,13 +445,13 @@ dir_space_found:
 	error = vmufat_list_blocks(inode);
 	if (error)
 		goto clean_fat;
-	up(&vmudetails->mutex);
+	mutex_unlock(&vmudetails->mutex);
 	d_instantiate(de, inode);
 	return error;
 
 clean_fat:
 	vmufat_set_fat(sb, freeblock, VMUFAT_UNALLOCATED);
-	up(&vmudetails->mutex);
+	mutex_unlock(&vmudetails->mutex);
 clean_inode:
 	iput(inode);
 out:
@@ -651,9 +651,9 @@ static void vmufat_remove_inode(struct inode *in)
 		goto ret;
 	}
 
-	down(&vmudetails->mutex);
+	mutex_lock(&vmudetails->mutex);
 	if (vmufat_clean_fat(sb, in->i_ino)) {
-		up(&vmudetails->mutex);
+		mutex_unlock(&vmudetails->mutex);
 		goto failure;
 	}
 
@@ -665,12 +665,12 @@ static void vmufat_remove_inode(struct inode *in)
 		brelse(bh);
 		bh = vmufat_sb_bread(sb, i);
 		if (!bh) {
-			up(&vmudetails->mutex);
+			mutex_unlock(&vmudetails->mutex);
 			goto failure;
 		}
 		for (j = 0; j < VMU_DIR_ENTRIES_PER_BLOCK; j++) {
 			if (bh->b_data[j * VMU_DIR_RECORD_LEN] == 0) {
-				up(&vmudetails->mutex);
+				mutex_unlock(&vmudetails->mutex);
 				goto failure;
 			}
 			if (le16_to_cpu(((u16 *) bh->b_data)
@@ -683,7 +683,7 @@ static void vmufat_remove_inode(struct inode *in)
 	}
 found:
 	if (found == 0) {
-		up(&vmudetails->mutex);
+		mutex_unlock(&vmudetails->mutex);
 		goto failure;
 	}
 
@@ -697,7 +697,7 @@ found:
 	for (l = i; l > vmudetails->dir_bnum - vmudetails->dir_len; l--) {
 		bh_old = vmufat_sb_bread(sb, l);
 		if (!bh_old) {
-			up(&vmudetails->mutex);
+			mutex_unlock(&vmudetails->mutex);
 			goto failure;
 		}
 		for (k = startpt; k < VMU_DIR_ENTRIES_PER_BLOCK; k++) {
@@ -725,7 +725,7 @@ lastdirfound:
 	/* fill gap first then wipe out old entry */
 	bh_old = vmufat_sb_bread(sb, l);
 	if (!bh_old) {
-		up(&vmudetails->mutex);
+		mutex_unlock(&vmudetails->mutex);
 		brelse(bh);
 		goto failure;
 	}
@@ -739,7 +739,7 @@ lastdirfound:
 	brelse(bh_old);
 
 finish:
-	up(&vmudetails->mutex);
+	mutex_unlock(&vmudetails->mutex);
 	brelse(bh);
 	return;
 
@@ -815,12 +815,12 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	vblk = list_entry(iter, struct vmufat_block_list, b_list);
 	finblk = vblk->bno;
 
-	down(&vmudetails->mutex);
+	mutex_lock(&vmudetails->mutex);
 	/* Exec files have to be linear */
 	if (inode->i_ino == 0) {
 		exeblk = vmufat_get_fat(sb, finblk + 1);
 		if (exeblk != VMUFAT_UNALLOCATED) {
-			up(&vmudetails->mutex);
+			mutex_unlock(&vmudetails->mutex);
 			printk(KERN_WARNING "VMUFAT: Cannot allocate linear "
 				"space needed for executible\n");
 			error = -ENOSPC;
@@ -830,18 +830,18 @@ static int vmufat_get_block(struct inode *inode, sector_t iblock,
 	} else {
 		nxtblk = vmufat_find_free(sb);
 		if (nxtblk < 0) {
-			up(&vmudetails->mutex);
+			mutex_unlock(&vmudetails->mutex);
 			error = nxtblk;
 			goto out;
 		}
 	}
 	error = vmufat_set_fat(sb, finblk, nxtblk);
 	if (error) {
-		up(&vmudetails->mutex);
+		mutex_unlock(&vmudetails->mutex);
 		goto out;
 	}
 	error = vmufat_set_fat(sb, nxtblk, VMUFAT_FILE_END);
-	up(&vmudetails->mutex);
+	mutex_unlock(&vmudetails->mutex);
 	if (error)
 		goto out;
 	error = vmufat_list_blocks(inode);
