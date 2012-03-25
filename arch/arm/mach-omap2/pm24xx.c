@@ -82,13 +82,7 @@ static int omap2_fclks_active(void)
 	f1 = omap2_cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
 	f2 = omap2_cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
 
-	/* Ignore UART clocks.  These are handled by UART core (serial.c) */
-	f1 &= ~(OMAP24XX_EN_UART1_MASK | OMAP24XX_EN_UART2_MASK);
-	f2 &= ~OMAP24XX_EN_UART3_MASK;
-
-	if (f1 | f2)
-		return 1;
-	return 0;
+	return (f1 | f2) ? 1 : 0;
 }
 
 static void omap2_enter_full_retention(void)
@@ -232,7 +226,6 @@ static int omap2_can_sleep(void)
 
 static void omap2_pm_idle(void)
 {
-	local_irq_disable();
 	local_fiq_disable();
 
 	if (!omap2_can_sleep()) {
@@ -249,7 +242,6 @@ static void omap2_pm_idle(void)
 
 out:
 	local_fiq_enable();
-	local_irq_enable();
 }
 
 #ifdef CONFIG_SUSPEND
@@ -468,7 +460,7 @@ static int __init omap2_pm_init(void)
 	}
 
 	suspend_set_ops(&omap_pm_ops);
-	pm_idle = omap2_pm_idle;
+	arm_pm_idle = omap2_pm_idle;
 
 	return 0;
 }

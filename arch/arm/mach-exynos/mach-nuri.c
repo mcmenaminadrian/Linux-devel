@@ -220,14 +220,14 @@ static struct s3c_fb_pd_win nuri_fb_win0 = {
 		.lower_margin	= 1,
 		.hsync_len	= 48,
 		.vsync_len	= 3,
-		.xres		= 1280,
-		.yres		= 800,
+		.xres		= 1024,
+		.yres		= 600,
 		.refresh	= 60,
 	},
 	.max_bpp	= 24,
 	.default_bpp	= 16,
-	.virtual_x	= 1280,
-	.virtual_y	= 800,
+	.virtual_x	= 1024,
+	.virtual_y	= 2 * 600,
 };
 
 static struct s3c_fb_platdata nuri_fb_pdata __initdata = {
@@ -1263,9 +1263,6 @@ static struct platform_device *nuri_devices[] __initdata = {
 	&s5p_device_mfc,
 	&s5p_device_mfc_l,
 	&s5p_device_mfc_r,
-	&exynos4_device_pd[PD_MFC],
-	&exynos4_device_pd[PD_LCD0],
-	&exynos4_device_pd[PD_CAM],
 	&s5p_device_fimc_md,
 
 	/* NURI Devices */
@@ -1315,14 +1312,6 @@ static void __init nuri_machine_init(void)
 
 	/* Last */
 	platform_add_devices(nuri_devices, ARRAY_SIZE(nuri_devices));
-	s5p_device_mfc.dev.parent = &exynos4_device_pd[PD_MFC].dev;
-	s5p_device_fimd0.dev.parent = &exynos4_device_pd[PD_LCD0].dev;
-
-	s5p_device_fimc0.dev.parent = &exynos4_device_pd[PD_CAM].dev;
-	s5p_device_fimc1.dev.parent = &exynos4_device_pd[PD_CAM].dev;
-	s5p_device_fimc2.dev.parent = &exynos4_device_pd[PD_CAM].dev;
-	s5p_device_fimc3.dev.parent = &exynos4_device_pd[PD_CAM].dev;
-	s5p_device_mipi_csis0.dev.parent = &exynos4_device_pd[PD_CAM].dev;
 }
 
 MACHINE_START(NURI, "NURI")

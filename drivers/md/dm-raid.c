@@ -615,14 +615,14 @@ static int read_disk_sb(struct md_rdev *rdev, int size)
 
 static void super_sync(struct mddev *mddev, struct md_rdev *rdev)
 {
-	struct md_rdev *r, *t;
+	struct md_rdev *r;
 	uint64_t failed_devices;
 	struct dm_raid_superblock *sb;
 
 	sb = page_address(rdev->sb_page);
 	failed_devices = le64_to_cpu(sb->failed_devices);
 
-	rdev_for_each(r, t, mddev)
+	rdev_for_each(r, mddev)
 		if ((r->raid_disk >= 0) && test_bit(Faulty, &r->flags))
 			failed_devices |= (1ULL << r->raid_disk);
 
@@ -668,7 +668,14 @@ static int super_load(struct md_rdev *rdev, struct md_rdev *refdev)
 		return ret;
 
 	sb = page_address(rdev->sb_page);
-	if (sb->magic != cpu_to_le32(DM_RAID_MAGIC)) {
+
+	/*
+	 * Two cases that we want to write new superblocks and rebuild:
+	 * 1) New device (no matching magic number)
+	 * 2) Device specified for rebuild (!In_sync w/ offset == 0)
+	 */
+	if ((sb->magic != cpu_to_le32(DM_RAID_MAGIC)) ||
+	    (!test_bit(In_sync, &rdev->flags) && !rdev->recovery_offset)) {
 		super_sync(rdev->mddev, rdev);
 
 		set_bit(FirstUse, &rdev->flags);
@@ -700,7 +707,7 @@ static int super_init_validation(struct mddev *mddev, struct md_rdev *rdev)
 	struct dm_raid_superblock *sb;
 	uint32_t new_devs = 0;
 	uint32_t rebuilds = 0;
-	struct md_rdev *r, *t;
+	struct md_rdev *r;
 	struct dm_raid_superblock *sb2;
 
 	sb = page_address(rdev->sb_page);
@@ -743,13 +750,10 @@ static int super_init_validation(struct mddev *mddev, struct md_rdev *rdev)
 	 *    case the In_sync bit will /not/ be set and
 	 *    recovery_cp must be MaxSector.
 	 */
-	rdev_for_each(r, t, mddev) {
+	rdev_for_each(r, mddev) {
 		if (!test_bit(In_sync, &r->flags)) {
-			if (!test_bit(FirstUse, &r->flags))
-				DMERR("Superblock area of "
-				      "rebuild device %d should have been "
-				      "cleared.", r->raid_disk);
-			set_bit(FirstUse, &r->flags);
+			DMINFO("Device %d specified for rebuild: "
+			       "Clearing superblock", r->raid_disk);
 			rebuilds++;
 		} else if (test_bit(FirstUse, &r->flags))
 			new_devs++;
@@ -778,7 +782,7 @@ static int super_init_validation(struct mddev *mddev, struct md_rdev *rdev)
 	 * Now we set the Faulty bit for those devices that are
 	 * recorded in the superblock as failed.
 	 */
-	rdev_for_each(r, t, mddev) {
+	rdev_for_each(r, mddev) {
 		if (!r->sb_page)
 			continue;
 		sb2 = page_address(r->sb_page);
@@ -851,11 +855,11 @@ static int super_validate(struct mddev *mddev, struct md_rdev *rdev)
 static int analyse_superblocks(struct dm_target *ti, struct raid_set *rs)
 {
 	int ret;
-	struct md_rdev *rdev, *freshest, *tmp;
+	struct md_rdev *rdev, *freshest;
 	struct mddev *mddev = &rs->md;
 
 	freshest = NULL;
-	rdev_for_each(rdev, tmp, mddev) {
+	rdev_for_each(rdev, mddev) {
 		if (!rdev->meta_bdev)
 			continue;
 
@@ -884,7 +888,7 @@ static int analyse_superblocks(struct dm_target *ti, struct raid_set *rs)
 	if (super_validate(mddev, freshest))
 		return -EINVAL;
 
-	rdev_for_each(rdev, tmp, mddev)
+	rdev_for_each(rdev, mddev)
 		if ((rdev != freshest) && super_validate(mddev, rdev))
 			return -EINVAL;
 
@@ -971,6 +975,7 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
 
 	INIT_WORK(&rs->md.event_work, do_table_event);
 	ti->private = rs;
+	ti->num_flush_requests = 1;
 
 	mutex_lock(&rs->md.reconfig_mutex);
 	ret = md_run(&rs->md);
